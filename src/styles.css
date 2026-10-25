@@ -232,3 +232,23 @@ button svg{vertical-align:middle}
 .sidebar-resizer:hover:before,.sidebar-resizer:focus-visible:before{background:var(--accent)}
 .resizing-sidebar,.resizing-sidebar *{cursor:col-resize!important;user-select:none!important}
 .resizing-sidebar .ghci-terminal{pointer-events:none}
+.font-settings{position:fixed;inset:0;margin:auto;width:720px;max-width:calc(100vw - 48px);max-height:calc(100vh - 48px);overflow:auto;padding:28px;border-radius:12px}
+.font-settings::backdrop{background:#69756138;backdrop-filter:blur(6px)}
+.font-settings-heading>svg{color:var(--accent)}
+.font-settings-heading h2{font-size:21px;margin:10px 0}
+.font-settings-heading p,.font-description{color:var(--text-muted);font-size:11px;line-height:1.8}
+.font-settings-controls{display:grid;grid-template-columns:minmax(0,1fr) 100px 110px;gap:16px;margin-top:24px}
+.font-settings-controls>label{display:flex;flex-direction:column;gap:8px;color:var(--text-muted);font-size:11px}
+.font-settings-controls select,.font-size-control{width:100%;height:36px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text);padding:0 10px}
+.font-size-control{display:flex;align-items:center;gap:5px}
+.font-size-control input{width:100%;min-width:0;border:0;background:transparent}
+.font-size-control>span{color:var(--text-subtle);font-size:10px}
+.font-settings-controls select:focus,.font-size-control:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.font-description{min-height:20px;margin:9px 0 18px}
+.font-ligatures{display:flex;align-items:flex-start;gap:9px;font-size:12px;color:var(--text);cursor:pointer}
+.font-ligatures input{accent-color:var(--accent);margin:2px 0 0}
+.font-ligatures small{display:block;font-size:10px;color:var(--text-muted);line-height:1.8;margin-top:4px}
+.font-ligatures code{font-family:Menlo,monospace}
+.font-preview-heading{display:flex;justify-content:space-between;color:var(--text-muted);font-size:10px;margin:24px 0 9px}
+.font-preview{height:260px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface)}
+.font-settings .modal-actions{margin-top:20px;justify-content:space-between}

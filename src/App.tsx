@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Search, ChevronDown, ArrowUp, ArrowUpRight, Check, Circle, Code2, Command, FileCode2, FolderOpen, Loader2, PanelLeftClose, PanelRightClose, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, Zap, CheckCheck, BookOpen } from 'lucide-react';
+import { Plus, Search, ChevronDown, ArrowUp, ArrowUpRight, Check, Circle, Code2, Command, FileCode2, FolderOpen, Loader2, PanelLeftClose, PanelRightClose, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, Zap, CheckCheck, BookOpen, Type } from 'lucide-react';
 import { Editor } from './Editor';
 import { GhciTerminal, type TerminalHandle } from './GhciTerminal';
 import { SidebarResizer } from './SidebarResizer';
+import { FontSettings } from './FontSettings';
+import { fontSettingsKey, loadFontSettings } from './fonts';
 import type { AppEvent, CodexStatus, Message, Problem, Diagnostic, Summary, WorkspaceInfo } from './types';
 
 const api = window.kata;
@@ -45,6 +47,8 @@ export function App() {
   const leftMax=Math.max(180,Math.min(480,layoutWidth-420-5-(right?sidebarWidths.right+5:0)));
   const rightMax=Math.max(260,Math.min(600,layoutWidth-420-5-(left?sidebarWidths.left+5:0)));
   const [vimEnabled,setVimEnabled] = useState(() => localStorage.getItem('kata-vim') !== 'off');
+  const [fontSettings,setFontSettings] = useState(loadFontSettings);
+  const [fontSettingsOpen,setFontSettingsOpen] = useState(false);
   const [mode,setMode] = useState('NORMAL'); const [cursor,setCursor] = useState([1,1]);
   const [diagnostics,setDiagnostics] = useState<Record<string,Diagnostic>>({}); const [busy,setBusy] = useState<Record<string,boolean>>({});
   const [dead,setDead] = useState<Record<string,boolean>>({}); const [generation,setGeneration] = useState<Record<string,number>>({});
@@ -59,6 +63,10 @@ export function App() {
   const messages = chatMap[id] || problem?.messages || []; const aiBusy = messages.some(x => x.pending);
   const lastError = diagnostics[id];
   const notify = useCallback((error:unknown) => setToast(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /,'') : String(error)), []);
+  useEffect(() => {
+    try { localStorage.setItem(fontSettingsKey,JSON.stringify(fontSettings)); }
+    catch { notify('フォント設定を保存できませんでした。'); }
+  },[fontSettings,notify]);
   useEffect(() => {
     const layout=layoutRef.current; if (!layout) return;
     const update=() => setLayoutWidth(layout.clientWidth);
@@ -154,6 +162,7 @@ export function App() {
   }, [busy,dead,save,notify]);
   useEffect(() => {
     const handler = (e:KeyboardEvent) => {
+      if (document.querySelector('dialog[open]')) return;
       if (e.defaultPrevented || !(e.metaKey || e.ctrlKey)) return;
       if ((e.target as HTMLElement).closest('.ghci-terminal') && !e.metaKey && !e.shiftKey) return;
       if (e.key === 's') { e.preventDefault(); save().catch(notify); }
@@ -220,7 +229,7 @@ export function App() {
   const filtered = items.filter(x => x.fileName.toLowerCase().includes(query.toLowerCase()));
   if (!api) return <div className="browser-notice"><Logo/><h1>Kata</h1><p>このアプリはElectronで起動してください。</p><code>npm run dev</code></div>;
   return <div className="app">
-    <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="左サイドバー" className="icon-button" onClick={() => setLeft(!left)}><PanelLeftClose size={15}/></button><button title="AIサイドバー" className="icon-button" onClick={() => setRight(!right)}><PanelRightClose size={15}/></button></div></header>
+    <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="フォント設定" aria-label="フォント設定" className="icon-button" onClick={() => setFontSettingsOpen(true)}><Type size={16}/></button><button title="左サイドバー" className="icon-button" onClick={() => setLeft(!left)}><PanelLeftClose size={15}/></button><button title="AIサイドバー" className="icon-button" onClick={() => setRight(!right)}><PanelRightClose size={15}/></button></div></header>
     <div className="layout" ref={layoutRef}>
       {left && <aside className="sidebar" id="file-sidebar" style={{ width:sidebarWidths.left }}>
         <div className="sidebar-heading"><span>FILES</span><span className="count-pill">{items.length}</span></div>
@@ -235,7 +244,7 @@ export function App() {
         {problem ? <>
         <div ref={split} className="split-workspace">
           <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button><button className="run-button" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button></div></div>
-          <Editor id={id} code={code} vimEnabled={vimEnabled} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
+          <Editor id={id} code={code} vimEnabled={vimEnabled} fontSettings={fontSettings} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
           <div className="editor-status"><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span><div className="editor-status-right"><span>Ln {cursor[0]}, Col {cursor[1]}</span><span>UTF-8</span><span>Haskell</span></div></div></section>
           <div className="split-handle" role="separator" aria-label="エディタとGHCiの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
           <section className="ghci-panel"><div className="ghci-header"><div className="panel-label"><Terminal size={14}/><strong>GHCi</strong><span className={`connection-dot ${dead[id]?'offline':''}`}/><span className="session-label">{dead[id]?'停止中':problem.fileName}</span></div><div className="ghci-tools">{lastError && <button className="ask-error-button" onClick={() => askOutput(lastError)}><Sparkles size={12}/>エラーをAIに聞く</button>}<button className="ask-output-button" title="選択範囲、未選択なら直近の端末出力をAIの質問に添付" onClick={() => askOutput()}><Sparkles size={12}/>出力をAIに相談</button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div></div>
@@ -251,6 +260,7 @@ export function App() {
     </div>
     <footer className="app-status"><div><span className="connection-dot"/><span>Local workspace</span><span className="footer-divider"/><Logo small/><span>Haskell</span></div><div>{saving?<><Loader2 size={11} className="spin"/>保存中</>:dirty?<><Circle size={7}/>未保存</>:<><CheckCheck size={12}/>すべて保存済み</>}<span className="footer-divider"/><button onClick={() => setHelp(true)}><Command size={11}/><span>ショートカット</span></button></div></footer>
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
+    {fontSettingsOpen && <FontSettings settings={fontSettings} onChange={setFontSettings} onClose={() => setFontSettingsOpen(false)}/>}
     {newOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setNewOpen(false); }}><form className="modal new-modal" onSubmit={e => { e.preventDefault(); void create(); }}><button type="button" className="modal-close icon-button" aria-label="閉じる" onClick={() => setNewOpen(false)}><X size={17}/></button><Logo/><span className="eyebrow">NEW HASKELL FILE</span><h2>新しいファイル</h2><p>選択中のフォルダーに .hs ファイルを作成します。</p><label>ファイル名<input autoFocus placeholder="例：SumOfOddNumbers.hs" value={newTitle} onChange={e => setNewTitle(e.target.value)} maxLength={160}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewOpen(false)}>キャンセル</button><button className="primary-button" type="submit"><Plus size={14}/>ファイルを作成</button></div></form></div>}
     {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['GHCiにフォーカス','⌘ J'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。</p></div></div>}
   </div>;

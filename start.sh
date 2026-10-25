@@ -8,7 +8,7 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -x node_modules/.bin/electron || ! -x node_modules/.bin/vite || ! -x node_modules/.bin/tsc ]] || ! node -e "require.resolve('node-pty'); require.resolve('@xterm/xterm'); require.resolve('@xterm/addon-fit')" >/dev/null 2>&1; then
+if [[ ! -x node_modules/.bin/electron || ! -x node_modules/.bin/vite || ! -x node_modules/.bin/tsc ]] || ! node -e "['node-pty', '@xterm/xterm', '@xterm/addon-fit', '@fontsource/jetbrains-mono', '@fontsource/fira-code', '@fontsource/monaspace-neon', '@fontsource/monaspace-argon'].forEach(name => require.resolve(name))" >/dev/null 2>&1; then
   echo "起動に必要な依存パッケージをインストールしています…"
   npm ci --include=dev
 fi

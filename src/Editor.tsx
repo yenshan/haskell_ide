@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { indentWithTab } from '@codemirror/commands';
@@ -7,10 +7,11 @@ import { StreamLanguage, syntaxHighlighting, HighlightStyle } from '@codemirror/
 import { haskell } from '@codemirror/legacy-modes/mode/haskell';
 import { tags } from '@lezer/highlight';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
+import { editorTypography, type FontSettings } from './fonts';
 
 const theme = EditorView.theme({
-  '&': { height:'100%', backgroundColor:'#ffffff', color:'#293329', fontSize:'13px' },
-  '.cm-scroller': { overflow:'auto', fontFamily:'"SFMono-Regular", Menlo, Consolas, monospace', lineHeight:'1.85' },
+  '&': { height:'100%', backgroundColor:'#ffffff', color:'#293329' },
+  '.cm-scroller': { overflow:'auto' },
   '.cm-content': { padding:'22px 0', caretColor:'#4b6e36' },
   '.cm-line': { padding:'0 24px 0 16px' },
   '.cm-gutters': { backgroundColor:'#ffffff', color:'#667165', border:'none', minWidth:'58px' },
@@ -28,16 +29,17 @@ const theme = EditorView.theme({
   '.cm-searchMatch': { backgroundColor:'#fff0cc', outline:'1px solid #dbc17e' },
   '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor:'#f6df9a' },
 }, { dark:false });
-const highlight = HighlightStyle.define([
+export const highlight = HighlightStyle.define([
   { tag:tags.keyword, color:'#7750a3' }, { tag:tags.comment, color:'#60705a', fontStyle:'italic' },
   { tag:tags.string, color:'#3c6c36' }, { tag:tags.number, color:'#9a5b1d' },
   { tag:[tags.typeName,tags.className], color:'#88621b' }, { tag:tags.operator, color:'#365f9a' },
   { tag:tags.variableName, color:'#293329' }, { tag:tags.bool, color:'#9a5b1d' }
 ]);
-type Props = { id:string; code:string; vimEnabled:boolean; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
+type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
 export function Editor(props:Props) {
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView|null>(null); const current = useRef(props); current.current = props;
   const applyingExternal = useRef(false);
+  const typography = useRef(new Compartment());
   useEffect(() => {
     if (!host.current) return;
     Vim.defineEx('write', 'w', () => current.current.onSave());
@@ -45,7 +47,7 @@ export function Editor(props:Props) {
       ...(props.vimEnabled ? [vim()] : []), basicSetup, keymap.of([
         { key:'Mod-s', run:() => { current.current.onSave(); return true; } },
         { key:'Mod-Enter', run:() => { current.current.onRun(); return true; } }, indentWithTab
-      ]), StreamLanguage.define(haskell), syntaxHighlighting(highlight), theme,
+      ]), StreamLanguage.define(haskell), syntaxHighlighting(highlight), theme, typography.current.of(editorTypography(current.current.fontSettings)),
       EditorState.tabSize.of(2),
       EditorView.updateListener.of(update => {
         if (update.docChanged && !applyingExternal.current) current.current.onChange(update.state.doc.toString());
@@ -62,6 +64,14 @@ export function Editor(props:Props) {
     current.current.onMode(props.vimEnabled ? 'NORMAL' : 'EDIT');
     return () => { editor.destroy(); view.current = null; };
   }, [props.id, props.vimEnabled]);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    editor.dispatch({ effects:typography.current.reconfigure(editorTypography(props.fontSettings)) });
+    let disposed = false;
+    document.fonts.ready.then(() => { if (!disposed) editor.requestMeasure(); });
+    return () => { disposed = true; };
+  },[props.fontSettings,props.id,props.vimEnabled]);
   useEffect(() => {
     const editor = view.current;
     if (editor && editor.state.doc.toString() !== props.code) {
