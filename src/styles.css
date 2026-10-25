@@ -91,12 +91,13 @@ button svg{vertical-align:middle}
 .lower-header{min-height:41px;flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface-muted)}
 .lower-header h2{display:flex;align-items:center;gap:7px;flex-shrink:0;margin:0;font-size:11px;font-weight:500;color:var(--text-muted)}
 .lower-resizer{height:100%}
+@container (max-width:560px){.ghci-tools .run-button kbd{display:none}}
 @container (max-width:420px){.ghci-tools .ask-error-button>span,.ghci-tools .ask-output-button>span{display:none}}
 .ai-model-settings{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;margin-left:auto;flex:1 1 180px}
 .ai-model-settings select{flex:1;min-width:0;max-width:210px;height:27px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-muted);font-size:10px;padding:0 7px;cursor:pointer;text-overflow:ellipsis}
 .ai-model-settings select[aria-label="推論レベル"]{max-width:145px}
 .ai-model-settings select:disabled{opacity:.6;cursor:default}
-.ghci-tools{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.ghci-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;max-width:100%;margin-left:auto;flex-shrink:0}
 .ask-error-button{font-size:9px;color:var(--warning);border:1px solid var(--warning-border);border-radius:4px;display:flex;align-items:center;gap:5px;padding:4px 6px;background:var(--warning-soft);margin-right:5px}
 .chat-area{flex:1;overflow:auto;min-height:0}
 .composer-area{padding:10px 16px;flex-shrink:0;border-top:1px solid var(--border)}
