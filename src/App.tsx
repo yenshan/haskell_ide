@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type } from 'lucide-react';
+import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type } from 'lucide-react';
 import { Editor } from './Editor';
 import { GhciTerminal, type TerminalHandle } from './GhciTerminal';
 import { SidebarResizer } from './SidebarResizer';
-import { LowerSplit } from './LowerSplit';
 import { FontSettings } from './FontSettings';
 import { fontSettingsKey, loadFontSettings } from './fonts';
 import { editorThemeKey, loadEditorTheme } from './editorThemes';
@@ -16,12 +15,23 @@ const time = (date:string) => new Date(date).toLocaleTimeString('ja-JP', { hour:
 const fileDate = (value:string) => new Date(value).toLocaleDateString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit' });
 function Logo({ small = false }:{ small?:boolean }) { return <span className={`haskell-logo ${small?'small':''}`}>λ<span>=</span></span>; }
 
-function initialSidebarWidth():number {
-  const fallback = window.innerWidth >= 1500 ? 254 : window.innerWidth <= 1200 ? 216 : 244;
+type SidebarWidths = { left:number; right:number };
+function initialSidebarWidths():SidebarWidths {
+  const fallback = { left:window.innerWidth >= 1500 ? 254 : window.innerWidth <= 1200 ? 216 : 244,right:window.innerWidth >= 1500 ? 380 : 330 };
   try {
     const saved = JSON.parse(localStorage.getItem('kata-sidebar-widths') || 'null');
-    return Number.isFinite(saved?.left) ? Math.max(180,Math.min(480,saved.left)) : fallback;
+    return { left:Number.isFinite(saved?.left) ? Math.max(180,Math.min(480,saved.left)) : fallback.left,
+      right:Number.isFinite(saved?.right) ? Math.max(280,Math.min(640,saved.right)) : fallback.right };
   } catch { return fallback; }
+}
+function fitSidebarWidths(preferred:SidebarWidths,width:number,left:boolean,right:boolean):SidebarWidths {
+  const available = Math.max(0,width-420-(left ? 185 : 42)-(right ? 285 : 42));
+  const requested = (left ? preferred.left-180 : 0)+(right ? preferred.right-280 : 0);
+  const scale = requested > 0 ? Math.min(1,available/requested) : 1;
+  return { left:left ? 180+Math.floor((preferred.left-180)*scale) : 42,right:right ? 280+Math.floor((preferred.right-280)*scale) : 42 };
+}
+function initialAssistantOpen() {
+  try { return localStorage.getItem('kata-ai-sidebar-open') !== 'off'; } catch { return true; }
 }
 function initialAISettings():{ model:string; effort:string } {
   try {
@@ -39,11 +49,13 @@ export function App() {
   const [query,setQuery] = useState('');
   const [newOpen,setNewOpen] = useState(false); const [newTitle,setNewTitle] = useState('');
   const [left,setLeft] = useState(true);
-  const [preferredWidth,setPreferredWidth] = useState(initialSidebarWidth);
+  const [right,setRight] = useState(initialAssistantOpen);
+  const [preferredWidths,setPreferredWidths] = useState(initialSidebarWidths);
   const [layoutWidth,setLayoutWidth] = useState(window.innerWidth);
   const layoutRef=useRef<HTMLDivElement>(null);
-  const leftMax = Math.max(180,Math.min(480,layoutWidth-425));
-  const sidebarWidth = Math.min(preferredWidth,leftMax);
+  const sidebarWidths = fitSidebarWidths(preferredWidths,layoutWidth,left,right);
+  const leftMax = Math.max(180,Math.min(480,layoutWidth-425-sidebarWidths.right-(right ? 5 : 0)));
+  const rightMax = Math.max(280,Math.min(640,layoutWidth-425-sidebarWidths.left-(left ? 5 : 0)));
   const [vimEnabled,setVimEnabled] = useState(() => localStorage.getItem('kata-vim') !== 'off');
   const [fontSettings,setFontSettings] = useState(loadFontSettings);
   const [editorTheme,setEditorTheme] = useState(loadEditorTheme);
@@ -95,9 +107,12 @@ export function App() {
     return () => observer.disconnect();
   },[]);
   useEffect(() => {
-    const timer=setTimeout(() => { try { localStorage.setItem('kata-sidebar-widths',JSON.stringify({ left:preferredWidth })); } catch {} },200);
+    const timer=setTimeout(() => { try { localStorage.setItem('kata-sidebar-widths',JSON.stringify(preferredWidths)); } catch {} },200);
     return () => clearTimeout(timer);
-  },[preferredWidth]);
+  },[preferredWidths]);
+  useEffect(() => {
+    try { localStorage.setItem('kata-ai-sidebar-open',right ? 'on' : 'off'); } catch {}
+  },[right]);
   const refresh = useCallback(async () => {
     const epoch = folderEpoch.current;
     const list = await api.list(); if (epoch !== folderEpoch.current) return;
@@ -225,6 +240,7 @@ export function App() {
   function askOutput(error?:Diagnostic) {
     const capture = error ? { text:error.output,selected:false } : terminalRef.current?.capture();
     if (!capture?.text.trim()) { notify('送信する端末出力がありません。'); return; }
+    setRight(true);
     const prompt = error?'このGHCiのエラーの原因と、修正のヒントを教えてください。':capture.selected?'選択したGHCiの出力について教えてください。':'直近のGHCiの出力について教えてください。';
     if (error) { setAttachedOutput(capture.text); setQuestion(prompt); }
     else void sendQuestion(prompt,capture.text);
@@ -266,7 +282,7 @@ export function App() {
   return <div className="app">
     <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="エディタ設定（フォント・配色）" aria-label="エディタ設定" className="icon-button" onClick={() => setFontSettingsOpen(true)}><Type size={16}/></button></div></header>
     <div className="layout" ref={layoutRef}>
-      <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:left ? sidebarWidth : 42 }}>
+      <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:sidebarWidths.left }}>
         <div className="sidebar-heading"><span hidden={!left}>FILES</span><button className="icon-button" title={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-label={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-expanded={left} aria-controls="file-sidebar-content" onClick={() => setLeft(!left)}>{left ? <PanelLeftClose size={15}/> : <PanelLeftOpen size={15}/>}</button></div>
         <div className="sidebar-content" id="file-sidebar-content" hidden={!left}>
         <button className="folder-setting" aria-label="フォルダー設定" title={folder?.path || 'フォルダーを選択'} disabled={choosingFolder} onClick={() => void chooseFolder()}>{choosingFolder?<Loader2 className="spin" size={15}/>:<FolderOpen size={15}/>}<span><strong>{folder?.name || 'フォルダーを設定'}</strong><small>{folder?.path || '.hs ファイルの保存先を選択'}</small></span><ChevronDown size={12}/></button>
@@ -276,7 +292,7 @@ export function App() {
         <div className="sidebar-bottom"><button className="sidebar-help" onClick={() => setHelp(true)}><Command size={14}/><span>キーボードショートカット</span><kbd>⌘ /</kbd></button></div>
         </div>
       </aside>
-      {left && <SidebarResizer side="left" controls="file-sidebar" width={sidebarWidth} min={180} max={leftMax} onResize={setPreferredWidth}/>}
+      {left && <SidebarResizer side="left" controls="file-sidebar" width={sidebarWidths.left} min={180} max={leftMax} onResize={width => setPreferredWidths(prev => ({ left:width,right:right ? sidebarWidths.right : prev.right }))}/>}
       <main className="main-workspace">
         {problem ? <>
         <div ref={split} className="split-workspace">
@@ -284,13 +300,19 @@ export function App() {
           <Editor id={id} code={code} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
           <div className="editor-status"><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span><div className="editor-status-right"><span>Ln {cursor[0]}, Col {cursor[1]}</span><span>UTF-8</span><span>Haskell</span></div></div></section>
           <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
-          <LowerSplit ghci={<section id="ghci-panel" className="lower-pane" aria-labelledby="ghci-heading">
+          <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading">
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
               <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに聞く" title="エラーをAIに聞く" onClick={() => askOutput(lastError)}><Sparkles size={12}/><span>エラーをAIに聞く</span></button>}<button className="ask-output-button" aria-label="出力をAIに相談" title="選択範囲、未選択なら直近の端末出力をAIに送信" disabled={aiBusy} onClick={() => askOutput()}><Sparkles size={12}/><span>出力をAIに相談</span></button><button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
             </div>
             <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
-          </section>} assistant={<section id="assistant-panel" className="lower-pane" aria-labelledby="assistant-heading">
-            <div className="lower-header"><h2 id="assistant-heading"><Sparkles size={13}/>AIアシスタント{aiBusy && <Loader2 size={12} className="spin"/>}</h2>
+          </section>
+        </div></> : <div className="workspace-empty"><Logo/><h2>{loading?'ワークスペースを読み込み中…':'.hs ファイルを選択するか、新しく作成してください。'}</h2><button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/>新しいファイル</button></div>}
+      </main>
+      {right && <SidebarResizer side="right" controls="assistant-panel" label="AIアシスタントの幅を調整" width={sidebarWidths.right} min={280} max={rightMax} onResize={width => setPreferredWidths(prev => ({ left:left ? sidebarWidths.left : prev.left,right:width }))}/>}
+      <aside id="assistant-panel" className={`ai-sidebar ${right ? '' : 'collapsed'}`} style={{ width:sidebarWidths.right }} aria-label="AIアシスタント">
+        <div className="lower-header ai-sidebar-heading"><h2 id="assistant-heading" hidden={!right}><Sparkles size={13}/>AIアシスタント{aiBusy && <Loader2 size={12} className="spin"/>}</h2><button className="icon-button" aria-label={right ? 'AIサイドバーを閉じる' : 'AIサイドバーを開く'} title={right ? 'AIサイドバーを閉じる' : 'AIサイドバーを開く'} aria-expanded={right} aria-controls="ai-sidebar-content" onClick={() => setRight(!right)}>{right ? <PanelRightClose size={15}/> : <PanelRightOpen size={15}/>}</button></div>
+        <div id="ai-sidebar-content" className="ai-sidebar-content" hidden={!right}>
+          <div className="ai-settings-row">
               <div className="ai-model-settings">
                 <select aria-label="Codexモデル" title="AIモデル" value={model} disabled={aiBusy || codexStatus.state === 'connecting' || !codexStatus.models.length} onChange={e => {
                   const next = codexStatus.models.find(option => option.id === e.target.value);
@@ -304,13 +326,12 @@ export function App() {
               <div className="composer-area">
                 {attachedOutput && <div className="attached-error"><details className="attached-preview"><summary>GHCiの端末出力を添付</summary><pre>{attachedOutput}</pre></details><button type="button" className="icon-button" aria-label="添付を外す" onClick={() => setAttachedOutput('')}><X size={12}/></button></div>}
                 <form className="composer" onSubmit={e => { e.preventDefault(); void sendQuestion(); }}>
-                  <input ref={questionInput} aria-label="AIへの質問" value={question} placeholder="質問を入力…" maxLength={50000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) e.preventDefault(); }}/>
-                  {aiBusy ? <button type="button" className="send-button stop" aria-label="応答を停止" onClick={() => api.stopAI(id).catch(notify)}><Square size={12} fill="currentColor"/></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!question.trim()}><ArrowUp size={16}/></button>}
+                  <input ref={questionInput} aria-label="AIへの質問" value={question} placeholder="質問を入力…" disabled={!problem} maxLength={50000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) e.preventDefault(); }}/>
+                  {aiBusy ? <button type="button" className="send-button stop" aria-label="応答を停止" onClick={() => api.stopAI(id).catch(notify)}><Square size={12} fill="currentColor"/></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!question.trim() || !problem}><ArrowUp size={16}/></button>}
                 </form>
               </div>
-          </section>}/>
-        </div></> : <div className="workspace-empty"><Logo/><h2>{loading?'ワークスペースを読み込み中…':'.hs ファイルを選択するか、新しく作成してください。'}</h2><button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/>新しいファイル</button></div>}
-      </main>
+        </div>
+      </aside>
     </div>
     <footer className="app-status"><div><span className="connection-dot"/><span>Local workspace</span><span className="footer-divider"/><Logo small/><span>Haskell</span></div><div>{saving?<><Loader2 size={11} className="spin"/>保存中</>:dirty?<><Circle size={7}/>未保存</>:<><CheckCheck size={12}/>すべて保存済み</>}<span className="footer-divider"/><button onClick={() => setHelp(true)}><Command size={11}/><span>ショートカット</span></button></div></footer>
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
