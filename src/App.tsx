@@ -7,6 +7,7 @@ import { SidebarResizer } from './SidebarResizer';
 import { LowerSplit } from './LowerSplit';
 import { FontSettings } from './FontSettings';
 import { fontSettingsKey, loadFontSettings } from './fonts';
+import { usePaneNavigation } from './usePaneNavigation';
 import type { AppEvent, CodexStatus, Message, Problem, Diagnostic, Summary, WorkspaceInfo } from './types';
 
 const api = window.kata;
@@ -29,6 +30,7 @@ function initialAISettings():{ model:string; effort:string } {
 }
 
 export function App() {
+  usePaneNavigation();
   const [items,setItems] = useState<Summary[]>([]); const [problem,setProblem] = useState<Problem|null>(null);
   const problemRef = useRef<Problem|null>(null); const codeRef = useRef(''); const dirtyRef = useRef(false);
   const folderEpoch = useRef(0);
@@ -191,7 +193,7 @@ export function App() {
       if (e.key === 's') { e.preventDefault(); save().catch(notify); }
       if (e.key === 'Enter') { e.preventDefault(); void run(); }
       if (e.key === 'n') { e.preventDefault(); setNewOpen(true); }
-      if (e.key === 'j') { e.preventDefault(); focusGhci(); }
+      if (e.key.toLowerCase() === 'j' && (e.metaKey || e.shiftKey)) { e.preventDefault(); focusGhci(); }
       if (e.key === '/') { e.preventDefault(); setHelp(prev => !prev); }
     };
     window.addEventListener('keydown',handler); return () => window.removeEventListener('keydown',handler);
@@ -305,6 +307,6 @@ export function App() {
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
     {fontSettingsOpen && <FontSettings settings={fontSettings} onChange={setFontSettings} onClose={() => setFontSettingsOpen(false)}/>}
     {newOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setNewOpen(false); }}><form className="modal new-modal" onSubmit={e => { e.preventDefault(); void create(); }}><button type="button" className="modal-close icon-button" aria-label="閉じる" onClick={() => setNewOpen(false)}><X size={17}/></button><Logo/><span className="eyebrow">NEW HASKELL FILE</span><h2>新しいファイル</h2><p>選択中のフォルダーに .hs ファイルを作成します。</p><label>ファイル名<input autoFocus placeholder="例：SumOfOddNumbers.hs" value={newTitle} onChange={e => setNewTitle(e.target.value)} maxLength={160}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewOpen(false)}>キャンセル</button><button className="primary-button" type="submit"><Plus size={14}/>ファイルを作成</button></div></form></div>}
-    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['GHCiにフォーカス','⌘ J'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。</p></div></div>}
+    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['領域移動（左 / 下 / 上 / 右）','Ctrl J → h / j / k / l'],['GHCiにフォーカス','⌘ J / Ctrl Shift J'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。領域移動は全OS共通です。</p></div></div>}
   </div>;
 }

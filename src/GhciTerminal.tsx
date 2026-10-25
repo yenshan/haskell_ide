@@ -35,11 +35,12 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
     });
     const fit=new FitAddon(); term.loadAddon(fit); term.open(host.current); terminal.current=term;
     term.attachCustomKeyEventHandler(event => {
+      if (event.defaultPrevented) return false;
       if (event.type==='keydown' && ((event.metaKey && event.key==='c') || (event.ctrlKey && event.shiftKey && event.key.toLowerCase()==='c')) && term.hasSelection()) {
         event.preventDefault(); navigator.clipboard.writeText(term.getSelection()).catch(current.current.onError); return false;
       }
       // Let application shortcuts bubble; ordinary terminal keys go to GHCi.
-      if ((event.metaKey || (event.ctrlKey && event.shiftKey)) && ['s','n','j','/','Enter'].includes(event.key)) return false;
+      if ((event.metaKey || (event.ctrlKey && event.shiftKey)) && ['s','n','j','/','enter'].includes(event.key.toLowerCase())) return false;
       return true;
     });
     const onData=term.onData(data => { if (initialized && !exited) window.kata.ghciWrite(id,data).catch(current.current.onError); });
