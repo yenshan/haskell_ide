@@ -1,5 +1,6 @@
 {
   "name": "kata-haskell",
+  "productName": "Kata",
   "version": "0.1.0",
   "private": true,
   "description": "A quiet workspace for Haskell practice",
@@ -40,6 +41,7 @@
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.1",

@@ -5,7 +5,7 @@
 
 ## 起動
 
-Node.js 20.19+（22系は22.12+）、GHC/GHCi、Codex CLIを用意してください。
+Node.js 22.12以降、GHC/GHCi、Codex CLIを用意してください。
 
 ```sh
 ./start.sh
@@ -15,6 +15,22 @@ Node.js 20.19+（22系は22.12+）、GHC/GHCi、Codex CLIを用意してくだ�
 AIを使う前に、未ログインの場合はターミナルで `codex login` を実行してください。
 
 ウィンドウのサイズ・位置・最大化状態は次回起動時に復元します。外部ディスプレイを外した場合は、現在の画面内に収まる位置へ調整します。開発時の保存先は `.runtime/window-state.json` です。
+
+## Macアプリの生成
+
+macOS上で次のコマンドを実行します。依存パッケージが不足していれば自動インストールし、画面をビルドして `.app` を生成します。
+
+```sh
+./build-mac.sh
+```
+
+生成先は `release/Kata-darwin-arm64/Kata.app`（Apple Silicon）または `release/Kata-darwin-x64/Kata.app`（Intel）です。実行中のNode.jsと同じアーキテクチャで生成し、再実行すると同じ生成先を置き換えます。別のディレクトリから絶対パスで実行することもできます。
+
+アプリアイコンは `assets/Kata.png` です。ビルド時にmacOS標準の `sips` と `iconutil` で各サイズを含む `assets/Kata.icns` を生成し、アプリへ組み込みます。生成時のプロンプトは `assets/icon-prompt.md` に保存しています。
+
+`Kata.app` をアプリケーションフォルダーへコピーすると、FinderやDockから起動できます。起動時のNode.js・npmは不要ですが、GHC/GHCi・Codex CLIは別途インストールしておいてください。Finder起動時も `~/.ghcup/bin`、`~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin` を検索します。
+
+練習ファイルや `.runtime/` はアプリへ同梱しません。アプリ版の設定と初期ワークスペースは `~/Library/Application Support/Kata/` に保存されるため、初回起動後に「フォルダー設定」で既存の `.hs` フォルダーを選択してください。このスクリプトはローカル利用向けで、Developer ID署名・公証は行いません。
 
 ## フォルダーとファイル
 
