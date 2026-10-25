@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('kata', {
   ghciRestart: id => ipcRenderer.invoke('ghci:restart', id),
   codexConnect: () => ipcRenderer.invoke('codex:connect'),
   codexStatus: () => ipcRenderer.invoke('codex:status'),
-  ask: (id, text, context, model) => ipcRenderer.invoke('codex:ask', id, text, context, model),
+  ask: (id, text, context, model, effort) => ipcRenderer.invoke('codex:ask', id, text, context, model, effort),
   stopAI: id => ipcRenderer.invoke('codex:interrupt', id),
   reveal: id => ipcRenderer.invoke('problems:reveal', id),
   closeReady: () => ipcRenderer.invoke('app:close-ready'),

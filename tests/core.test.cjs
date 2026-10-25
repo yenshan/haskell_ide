@@ -191,19 +191,22 @@ test('GHCi native Tab completion and arrow-key history', { timeout:15000 }, asyn
   assert.doesNotMatch(output[item.id],/Tab character found/);
 });
 
-test('Codex streams per-file ephemeral conversations without writing local metadata', { timeout:10000 }, async t => {
+test('Codex streams ephemeral chats, discovers model efforts, and applies live search and per-turn settings', { timeout:10000 }, async t => {
   const root = await temporary(t); const store = new Store(root); await store.init();
   const script = path.join(root,'fake-codex.cjs');
   await fs.writeFile(script,`#!/usr/bin/env node
 const rl = require('node:readline').createInterface({ input:process.stdin });
+const fs = require('node:fs');
+fs.writeFileSync('argv.log',JSON.stringify(process.argv));
 const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
 let initialized = false;
-rl.on('line', line => { const m = JSON.parse(line); let result = {};
+rl.on('line', line => { const m = JSON.parse(line); let result = {}; fs.appendFileSync('rpc.log',line+'\\n');
   if (m.method === 'initialize') result = { userAgent:'test' };
   else if (m.method === 'initialized') { initialized = true; return; }
   else if (!initialized) return send({ id:m.id,error:{ message:'Not initialized' } });
   else if (m.method === 'account/read') result = { requiresOpenaiAuth:false,account:null };
-  else if (m.method === 'model/list') result = { data:[{ id:'test',model:'test',displayName:'Test',isDefault:true }] };
+  else if (m.method === 'model/list') result = m.params.cursor ? { data:[{ id:'fast',model:'fast',displayName:'Fast',isDefault:false,defaultReasoningEffort:'low',supportedReasoningEfforts:[{ reasoningEffort:'low',description:'Fast' },{ reasoningEffort:'high',description:'Deep' }] }] } : { data:[{ id:'test',model:'test',displayName:'Test',isDefault:true,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{ reasoningEffort:'medium',description:'Balanced' },{ reasoningEffort:'high',description:'Deep' }] }],nextCursor:'second' };
+  else if (m.method === 'config/read') result = { config:{ model:'test',model_reasoning_effort:'medium' } };
   else if (m.method === 'thread/start') { if(m.params.sandbox!=='read-only' || !m.params.ephemeral) process.exit(8); result = { thread:{ id:'thread-test' } }; }
   else if (m.method === 'thread/resume') result = { thread:{ id:m.params.threadId } };
   else if (m.method === 'turn/start') {
@@ -220,16 +223,37 @@ rl.on('line', line => { const m = JSON.parse(line); let result = {};
 });`,{ mode:0o755 });
   const events = []; const codex = new Codex(store,e => events.push(e),script); t.after(() => codex.close());
   const item = await store.create('Solution.hs',example); await codex.connect(); assert.equal(codex.status.state,'connected');
-  await codex.ask(item.id,'ヒントをください','solution 10\n23','test');
+  assert.deepEqual(codex.status.models.map(model => model.id),['test','fast']);
+  assert.deepEqual(codex.status.models[0].supportedReasoningEfforts.map(option => option.effort),['medium','high']);
+  assert.equal(codex.status.defaultModel,'test');
+  await codex.ask(item.id,'ヒントをください','solution 10\n23','test','high');
   await new Promise(r => setTimeout(r,100));
   assert.equal(store.find(item.id).threadId,'thread-test');
   assert.equal(store.find(item.id).messages.at(-1).text,'型を確認しましょう。');
   assert.equal(store.find(item.id).messages.at(-1).pending,false);
   assert.ok(events.some(x => x.type==='ai-message'));
   codex.loaded.clear();
-  await codex.ask(item.id,'もう少し詳しく','','test');
+  await codex.ask(item.id,'もう少し詳しく','','');
   await new Promise(r => setTimeout(r,100));
   assert.equal(store.find(item.id).messages.length,4);
+  await codex.ask(item.id,'別のモデルで','','fast','high');
+  await new Promise(r => setTimeout(r,100));
+  await codex.ask(item.id,'標準の推論レベルで','','fast');
+  await new Promise(r => setTimeout(r,100));
+  await assert.rejects(codex.ask(item.id,'未対応の推論','','fast','ultra'),/推論レベル/);
+  assert.equal(store.find(item.id).messages.at(-1).pending,false);
+  const requests = (await fs.readFile(path.join(root,'rpc.log'),'utf8')).trim().split('\n').map(JSON.parse);
+  const turns = requests.filter(request => request.method === 'turn/start').map(request => request.params);
+  assert.deepEqual(turns.map(turn => [turn.model,turn.effort]),[['test','high'],['test','medium'],['fast','high'],['fast','low']]);
+  for (const request of requests.filter(request => ['thread/start','thread/resume'].includes(request.method))) {
+    assert.equal(request.params.config.web_search,'live');
+    assert.equal(request.params.config['features.shell_tool'],false);
+  }
+  const instructions = requests.find(request => request.method === 'thread/start').params.developerInstructions;
+  assert.match(instructions,/may use the built-in web search/);
+  const argv = JSON.parse(await fs.readFile(path.join(root,'argv.log'),'utf8'));
+  assert.ok(argv.includes('web_search="live"'));
+  assert.ok(argv.includes('features.shell_tool=false'));
   await store.writes;
   const reopened = new Store(root); await reopened.init();
   assert.deepEqual(reopened.find(item.id).messages,[]);

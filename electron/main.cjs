@@ -59,7 +59,7 @@ app.whenReady().then(async () => {
     'ghci:restart': (_, id) => ghci.restart(id,store.file(id)),
     'codex:connect': () => codex.connect(),
     'codex:status': () => codex.status,
-    'codex:ask': (_, id, text, context, model) => codex.ask(id, text, context, model),
+    'codex:ask': (_, id, text, context, model, effort) => codex.ask(id, text, context, model, effort),
     'codex:interrupt': (_, id) => codex.interrupt(id),
     'app:close-ready': async () => { await store.writes; closeAllowed = true; win.close(); }
   };

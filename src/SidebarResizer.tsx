@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 type Props = {
   side:'left'|'right'; width:number; min:number; max:number;
   controls:string; onResize:(width:number)=>void;
+  label?:string; className?:string;
 };
 
 export function SidebarResizer(props:Props) {
@@ -21,8 +22,8 @@ export function SidebarResizer(props:Props) {
     const { min,max,onResize }=current.current;
     onResize(Math.round(Math.max(min,Math.min(max,value))));
   }
-  return <div className="sidebar-resizer" role="separator" tabIndex={0}
-    aria-label={`${props.side==='left'?'左':'右'}サイドバーの幅を調整`}
+  return <div className={`sidebar-resizer ${props.className || ''}`} role="separator" tabIndex={0}
+    aria-label={props.label || `${props.side==='left'?'左':'右'}サイドバーの幅を調整`}
     aria-orientation="vertical" aria-controls={props.controls}
     aria-valuemin={props.min} aria-valuemax={props.max} aria-valuenow={props.width}
     aria-valuetext={`${props.width}px`}

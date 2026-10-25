@@ -4,7 +4,8 @@ export type Summary = Omit<Problem, 'code'|'messages'> & { messageCount:number }
 export type WorkspaceInfo = { path:string; name:string; warning:string|null };
 export type Diagnostic = { output:string; at:string };
 export type TerminalSnapshot = { data:string; seq:number; cols:number; rows:number; alive:boolean };
-export type CodexStatus = { state:'disconnected'|'connecting'|'connected'|'error'; message:string; authenticated?:boolean; models:{ id:string; name:string; isDefault:boolean }[] };
+export type CodexModel = { id:string; name:string; isDefault:boolean; defaultReasoningEffort:string; supportedReasoningEfforts:{ effort:string; description:string }[] };
+export type CodexStatus = { state:'disconnected'|'connecting'|'connected'|'error'; message:string; authenticated?:boolean; defaultModel?:string; defaultReasoningEffort?:string; models:CodexModel[] };
 export type AppEvent = { type:'workspace-changed' } | { type:'before-close' } | { type:'ghci-data'; id:string; data:string; seq:number } | { type:'ghci-diagnostic'; id:string; diagnostic:Diagnostic } | { type:'ghci-exit'; id:string; message:string } | { type:'codex-status'; status:CodexStatus } | { type:'ai-message'; id:string; message:Message } | { type:'ai-messages'; id:string; messages:Message[] } | { type:'notice'; message:string };
 export interface Bridge {
   list():Promise<Summary[]>; create(title:string):Promise<Problem>; open(id:string):Promise<Problem>;
@@ -14,7 +15,7 @@ export interface Bridge {
   ghciWrite(id:string, data:string):Promise<void>; ghciResize(id:string, cols:number, rows:number):Promise<void>;
   ghciReload(id:string):Promise<void>; ghciRestart(id:string):Promise<TerminalSnapshot>;
   codexConnect():Promise<CodexStatus>; codexStatus():Promise<CodexStatus>;
-  ask(id:string, text:string, context:string, model:string):Promise<unknown>; stopAI(id:string):Promise<void>;
+  ask(id:string, text:string, context:string, model:string, effort?:string):Promise<unknown>; stopAI(id:string):Promise<void>;
   reveal(id:string):Promise<void>; closeReady():Promise<void>; onEvent(callback:(e:AppEvent)=>void):()=>void;
 }
 declare global { interface Window { kata:Bridge } }
