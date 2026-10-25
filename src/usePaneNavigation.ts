@@ -14,11 +14,6 @@ function paneAt(element:Element|null):Pane|undefined {
 }
 function focusPane(pane:Pane) {
   const root = document.querySelector(selectors[pane]);
-  if (pane === 'assistant' && root?.querySelector<HTMLElement>('#ai-sidebar-content')?.hidden) {
-    root.querySelector<HTMLButtonElement>('[aria-controls="ai-sidebar-content"]')?.click();
-    requestAnimationFrame(() => focusPane(pane));
-    return;
-  }
   const target = pane === 'editor' ? root?.querySelector('.cm-content') :
     pane === 'ghci' ? root?.querySelector('.xterm-helper-textarea') :
     pane === 'assistant' ? root?.querySelector('[aria-label="AIへの質問"]') :
@@ -27,9 +22,10 @@ function focusPane(pane:Pane) {
   else if (pane === 'sidebar') root?.querySelector<HTMLButtonElement>('.sidebar-heading button')?.focus();
 }
 
-export function usePaneNavigation(askError:() => void) {
+export function usePaneNavigation(askError:() => void, ghciSide = false, revealPane?:(pane:Pane) => void) {
   const askErrorRef = useRef(askError);
   askErrorRef.current = askError;
+  const layoutRef = useRef({ ghciSide,revealPane }); layoutRef.current = { ghciSide,revealPane };
   useEffect(() => {
     let source:Pane|undefined, timer:ReturnType<typeof setTimeout>|undefined;
     let center:'editor'|'ghci' = 'editor';
@@ -54,8 +50,15 @@ export function usePaneNavigation(askError:() => void) {
         if (key === 'escape' || (!event.metaKey && !event.altKey && ['h','j','k','l','e'].includes(key))) {
           swallow(event); consumed.add(code);
           if (key === 'e') { askErrorRef.current(); return; }
-          const next = from === 'assistant' && key === 'h' ? center : neighbors[from][key as Direction];
-          if (next) focusPane(next);
+          const side = layoutRef.current.ghciSide;
+          const next = side && from === 'ghci' && key === 'h' ? 'editor' :
+            from === 'assistant' && key === 'h' ? center :
+            side && from === 'editor' && key === 'l' ? 'ghci' :
+            neighbors[from][key as Direction];
+          if (next) {
+            layoutRef.current.revealPane?.(next);
+            requestAnimationFrame(() => focusPane(next));
+          }
           return;
         }
       }

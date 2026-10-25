@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type } from 'lucide-react';
+import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type, PanelBottom, PanelRight } from 'lucide-react';
 import { Editor } from './Editor';
 import { GhciTerminal, type TerminalHandle } from './GhciTerminal';
 import { SidebarResizer } from './SidebarResizer';
@@ -24,12 +24,6 @@ function initialSidebarWidths():SidebarWidths {
       right:Number.isFinite(saved?.right) ? Math.max(280,Math.min(640,saved.right)) : fallback.right };
   } catch { return fallback; }
 }
-function fitSidebarWidths(preferred:SidebarWidths,width:number,left:boolean,right:boolean):SidebarWidths {
-  const available = Math.max(0,width-420-(left ? 185 : 42)-(right ? 285 : 42));
-  const requested = (left ? preferred.left-180 : 0)+(right ? preferred.right-280 : 0);
-  const scale = requested > 0 ? Math.min(1,available/requested) : 1;
-  return { left:left ? 180+Math.floor((preferred.left-180)*scale) : 42,right:right ? 280+Math.floor((preferred.right-280)*scale) : 42 };
-}
 function initialAssistantOpen() {
   try { return localStorage.getItem('kata-ai-sidebar-open') !== 'off'; } catch { return true; }
 }
@@ -49,12 +43,22 @@ export function App() {
   const [newOpen,setNewOpen] = useState(false); const [newTitle,setNewTitle] = useState('');
   const [left,setLeft] = useState(true);
   const [right,setRight] = useState(initialAssistantOpen);
+  const [ghciSide,setGhciSide] = useState(() => {
+    try { return localStorage.getItem('kata-ghci-layout') === 'side'; } catch { return false; }
+  });
+  const [preferredGhciWidth,setPreferredGhciWidth] = useState(() => {
+    try { const saved = Number(localStorage.getItem('kata-ghci-width')); return saved >= 220 && saved <= 1200 ? saved : 380; } catch { return 380; }
+  });
   const [preferredWidths,setPreferredWidths] = useState(initialSidebarWidths);
   const [layoutWidth,setLayoutWidth] = useState(window.innerWidth);
   const layoutRef=useRef<HTMLDivElement>(null);
-  const sidebarWidths = fitSidebarWidths(preferredWidths,layoutWidth,left,right);
-  const leftMax = Math.max(180,Math.min(480,layoutWidth-425-sidebarWidths.right-(right ? 5 : 0)));
-  const rightMax = Math.max(280,Math.min(640,layoutWidth-425-sidebarWidths.left-(left ? 5 : 0)));
+  const leftMax = Math.max(180,Math.min(480,layoutWidth-467));
+  const leftWidth = left ? Math.min(preferredWidths.left,leftMax) : 42;
+  const workspaceWidth = layoutWidth-leftWidth-(left ? 5 : 0)-42;
+  const rightMax = Math.max(280,Math.min(640,workspaceWidth+42));
+  const assistantWidth = Math.min(preferredWidths.right,rightMax);
+  const ghciMax = Math.max(220,workspaceWidth-225);
+  const ghciWidth = Math.min(preferredGhciWidth,ghciMax);
   const [vimEnabled,setVimEnabled] = useState(() => localStorage.getItem('kata-vim') !== 'off');
   const [fontSettings,setFontSettings] = useState(loadFontSettings);
   const [editorTheme,setEditorTheme] = useState(loadEditorTheme);
@@ -109,6 +113,12 @@ export function App() {
     const timer=setTimeout(() => { try { localStorage.setItem('kata-sidebar-widths',JSON.stringify(preferredWidths)); } catch {} },200);
     return () => clearTimeout(timer);
   },[preferredWidths]);
+  useEffect(() => {
+    try { localStorage.setItem('kata-ghci-width',String(preferredGhciWidth)); } catch {}
+  },[preferredGhciWidth]);
+  useEffect(() => {
+    try { localStorage.setItem('kata-ghci-layout',ghciSide ? 'side' : 'bottom'); } catch {}
+  },[ghciSide]);
   useEffect(() => {
     try { localStorage.setItem('kata-ai-sidebar-open',right ? 'on' : 'off'); } catch {}
   },[right]);
@@ -194,6 +204,7 @@ export function App() {
     observer.observe(area); return () => observer.disconnect();
   },[id]);
   const focusGhci = useCallback(() => {
+    setRight(false);
     requestAnimationFrame(() => terminalRef.current?.focus());
   },[]);
   const run = useCallback(async () => {
@@ -206,6 +217,14 @@ export function App() {
       setDead(prev => ({ ...prev,[p.id]:false })); focusGhci();
     } catch (e) { notify(e); } finally { setBusy(prev => ({ ...prev,[p.id]:false })); }
   }, [busy,dead,save,notify,focusGhci]);
+  useEffect(() => {
+    const close = (event:KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || !right || document.querySelector('dialog[open],.modal-backdrop')) return;
+      event.preventDefault(); setRight(false);
+      if (document.activeElement?.closest('#assistant-panel')) requestAnimationFrame(() => document.querySelector<HTMLElement>('.cm-content')?.focus());
+    };
+    window.addEventListener('keydown',close); return () => window.removeEventListener('keydown',close);
+  },[right]);
   useEffect(() => {
     const handler = (e:KeyboardEvent) => {
       if (document.querySelector('dialog[open]')) return;
@@ -242,7 +261,9 @@ export function App() {
     void sendQuestion('このGHCiのエラーの原因と、修正のヒントを教えてください。',error.output);
     setTimeout(() => questionInput.current?.focus(),0);
   }
-  usePaneNavigation(() => { if (lastError && !aiBusy) askError(lastError); });
+  usePaneNavigation(() => { if (lastError && !aiBusy) askError(lastError); },ghciSide,pane => {
+    setRight(pane === 'assistant');
+  });
   async function restart() {
     if (!id || busy[id]) return; setBusy(prev => ({ ...prev,[id]:true }));
     try {
@@ -278,7 +299,7 @@ export function App() {
   if (!api) return <div className="browser-notice"><Logo/><h1>Kata</h1><p>このアプリはElectronで起動してください。</p><code>npm run dev</code></div>;
   return <div className="app">
     <div className="layout" ref={layoutRef}>
-      <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:sidebarWidths.left }}>
+      <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:leftWidth }}>
         <div className="sidebar-heading"><span hidden={!left}>FILES</span><button className="icon-button" title={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-label={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-expanded={left} aria-controls="file-sidebar-content" onClick={() => setLeft(!left)}>{left ? <PanelLeftClose size={15}/> : <PanelLeftOpen size={15}/>}</button></div>
         <div className="sidebar-content" id="file-sidebar-content" hidden={!left}>
         <button className="folder-setting" aria-label="フォルダー設定" title={folder?.path || 'フォルダーを選択'} disabled={choosingFolder} onClick={() => void chooseFolder()}>{choosingFolder?<Loader2 className="spin" size={15}/>:<FolderOpen size={15}/>}<span><strong>{folder?.name || 'フォルダーを設定'}</strong><small>{folder?.path || '.hs ファイルの保存先を選択'}</small></span><ChevronDown size={12}/></button>
@@ -288,26 +309,30 @@ export function App() {
         </div>
         <div className="sidebar-bottom"><button title="エディタ設定（フォント・配色）" aria-label="エディタ設定" className="sidebar-settings" onClick={() => setFontSettingsOpen(true)}><Type size={16}/><span hidden={!left}>フォント・配色設定</span></button></div>
       </aside>
-      {left && <SidebarResizer side="left" controls="file-sidebar" width={sidebarWidths.left} min={180} max={leftMax} onResize={width => setPreferredWidths(prev => ({ left:width,right:right ? sidebarWidths.right : prev.right }))}/>}
+      {left && <SidebarResizer side="left" controls="file-sidebar" width={leftWidth} min={180} max={leftMax} onResize={width => setPreferredWidths(prev => ({ ...prev,left:width }))}/>}
+      <div className="workspace-area">
       <main className="main-workspace">
         {problem ? <>
-        <div ref={split} className="split-workspace">
+        <div ref={split} className={`split-workspace ${ghciSide ? 'ghci-at-side' : ''}`}>
           <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
           <Editor id={id} code={code} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
           </section>
-          <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
-          <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading">
+          {!ghciSide && <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>}
+          {ghciSide && <SidebarResizer side="right" controls="ghci-panel" label="GHCiの幅を調整" width={ghciWidth} min={220} max={ghciMax} onResize={setPreferredGhciWidth}/>}
+          <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading" style={ghciSide ? { width:ghciWidth,flex:'0 0 auto' } : undefined}>
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
-              <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに相談" title="エラー内容をAIに送信 (Ctrl-J → e)" disabled={aiBusy} onClick={() => askError(lastError)}><Sparkles size={12}/><span>エラーをAIに相談</span></button>}<button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
+              <div className="ghci-tools"><button className="icon-button" aria-label={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} title={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} onClick={() => setGhciSide(!ghciSide)}>{ghciSide ? <PanelBottom size={14}/> : <PanelRight size={14}/>}</button>{lastError && <button className="ask-error-button" aria-label="エラーをAIに相談" title="エラー内容をAIに送信 (Ctrl-J → e)" disabled={aiBusy} onClick={() => askError(lastError)}><Sparkles size={12}/><span>エラーをAIに相談</span></button>}<button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
             </div>
             <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
           </section>
         </div></> : <div className="workspace-empty"><Logo/><h2>{loading?'ワークスペースを読み込み中…':'.hs ファイルを選択するか、新しく作成してください。'}</h2><button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/>新しいファイル</button></div>}
       </main>
-      {right && <SidebarResizer side="right" controls="assistant-panel" label="AIアシスタントの幅を調整" width={sidebarWidths.right} min={280} max={rightMax} onResize={width => setPreferredWidths(prev => ({ left:left ? sidebarWidths.left : prev.left,right:width }))}/>}
-      <aside id="assistant-panel" className={`ai-sidebar ${right ? '' : 'collapsed'}`} style={{ width:sidebarWidths.right }} aria-label="AIアシスタント">
-        <div className="lower-header ai-sidebar-heading"><h2 id="assistant-heading" hidden={!right}><Sparkles size={13}/>AIアシスタント{aiBusy && <Loader2 size={12} className="spin"/>}</h2><button className="icon-button" aria-label={right ? 'AIサイドバーを閉じる' : 'AIサイドバーを開く'} title={right ? 'AIサイドバーを閉じる' : 'AIサイドバーを開く'} aria-expanded={right} aria-controls="ai-sidebar-content" onClick={() => setRight(!right)}>{right ? <PanelRightClose size={15}/> : <PanelRightOpen size={15}/>}</button></div>
-        <div id="ai-sidebar-content" className="ai-sidebar-content" hidden={!right}>
+      {!right && <button className="assistant-launcher" title="AIアシスタントを開く" aria-label="AIサイドバーを開く" aria-expanded={false} aria-controls="assistant-panel" onClick={() => { setRight(true); requestAnimationFrame(() => questionInput.current?.focus()); }}><Sparkles size={14}/><span>AIアシスタント</span>{aiBusy && <Loader2 size={12} className="spin"/>}</button>}
+      <div className="assistant-overlay" style={{ width:assistantWidth }} hidden={!right}>
+        <SidebarResizer side="right" controls="assistant-panel" label="AIアシスタントの幅を調整" className="assistant-resizer" width={assistantWidth} min={280} max={rightMax} onResize={width => setPreferredWidths(prev => ({ ...prev,right:width }))}/>
+        <aside id="assistant-panel" className="ai-sidebar" aria-label="AIアシスタント">
+        <div className="lower-header ai-sidebar-heading"><h2 id="assistant-heading"><Sparkles size={13}/>AIアシスタント{aiBusy && <Loader2 size={12} className="spin"/>}</h2><button className="icon-button" aria-label="AIサイドバーを閉じる" title="AIアシスタントを閉じる (Esc)" aria-expanded={right} aria-controls="ai-sidebar-content" onClick={() => { setRight(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.cm-content')?.focus()); }}><X size={15}/></button></div>
+        <div id="ai-sidebar-content" className="ai-sidebar-content" aria-labelledby="assistant-heading" hidden={!right}>
           <div className="ai-settings-row">
               <div className="ai-model-settings">
                 <select aria-label="Codexモデル" title="AIモデル" value={model} disabled={aiBusy || codexStatus.state === 'connecting' || !codexStatus.models.length} onChange={e => {
@@ -326,7 +351,9 @@ export function App() {
                 </form>
               </div>
         </div>
-      </aside>
+        </aside>
+      </div>
+      </div>
     </div>
     <footer className="app-status">
       <div><span className="connection-dot"/><span>Local workspace</span>{problem && <><span className="footer-divider"/><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span></>}</div>

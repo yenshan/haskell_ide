@@ -215,6 +215,18 @@ button svg{vertical-align:middle}
 .ai-sidebar-heading h2[hidden]{display:none}
 .ai-sidebar-content{display:flex;flex-direction:column;flex:1;min-height:0}
 .ai-sidebar-content[hidden]{display:none}
-.ai-sidebar.collapsed{border-left:1px solid var(--border)}
-.ai-sidebar.collapsed .ai-sidebar-heading{justify-content:center;padding:6px 8px}
 .ai-settings-row{display:flex;align-items:center;flex-shrink:0;padding:8px 12px;border-bottom:1px solid var(--border)}
+
+.workspace-area{position:relative;display:flex;flex:1;min-width:0;min-height:0}
+.workspace-area>.main-workspace{margin-right:42px}
+.ghci-at-side{flex-direction:row}
+.ghci-at-side .editor-panel{height:auto;flex:1;min-width:0}
+.assistant-overlay{position:absolute;top:0;right:0;bottom:0;z-index:20;display:flex;border-left:1px solid var(--border-strong);background:var(--surface);box-shadow:-8px 0 24px #29332920}
+.assistant-overlay[hidden]{display:none}
+.assistant-overlay .ai-sidebar{flex:1;min-width:0;overflow:hidden}
+.assistant-resizer{position:absolute;left:-5px;top:0;bottom:0;border-radius:5px;background:transparent}
+.assistant-resizer:before{background:transparent}
+.assistant-resizer:hover:before,.assistant-resizer:focus-visible:before{background:var(--accent)}
+.assistant-launcher{position:absolute;right:0;top:0;bottom:0;width:42px;z-index:10;display:flex;flex-direction:column;align-items:center;gap:10px;padding:13px 0;background:var(--surface-muted);border-left:1px solid var(--border);color:var(--accent)}
+.assistant-launcher>span{display:none}
+.assistant-launcher:hover{background:var(--accent-soft)}

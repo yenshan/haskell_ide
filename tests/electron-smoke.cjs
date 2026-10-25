@@ -38,13 +38,13 @@ const timeout = setTimeout(() => finish(new Error('Electron smoke test timed out
 function finish(error) {
   if (finished) return; finished = true; clearTimeout(timeout);
   if (error) console.error(error);
-  else console.log('Electron smoke passed: renderer, Vim edit, autosave, real GHCi, error context, file creation and switching.');
+  else console.log('Electron smoke passed: renderer, Vim edit, autosave, real GHCi, error context, file creation, switching and GHCi layouts.');
   app.exit(error ? 1 : 0);
 }
 app.on('browser-window-created', (_,win) => {
   win.webContents.on('console-message', (_, details) => { if (details.level >= 3) console.error('Renderer:',details.message); });
   win.webContents.once('did-finish-load', async () => {
-    const evaluate = code => win.webContents.executeJavaScript(code,true);
+    const evaluate = code => win.webContents.executeJavaScript(code,true).catch(error => { throw new Error(`${error.message}\nEvaluating: ${code}`); });
     const pause = ms => new Promise(r => setTimeout(r,ms));
     const key = (keyCode,modifiers = []) => {
       win.webContents.sendInputEvent({ type:'keyDown',keyCode,modifiers });
@@ -55,6 +55,7 @@ app.on('browser-window-created', (_,win) => {
     try {
       await until(`document.querySelector('.xterm') && document.querySelector('.cm-content')`);
       assert.match(await evaluate('document.body.innerText'),/Multiples of 3 or 5/);
+      await evaluate(`document.querySelector('[aria-label="AIサイドバーを閉じる"]').click()`);
       // Native key events go through Vim and CodeMirror, then the app autosave.
       await evaluate(`document.querySelector('.cm-content').focus()`);
       win.webContents.sendInputEvent({ type:'keyDown', keyCode:'G', modifiers:['shift'] });
@@ -78,6 +79,50 @@ app.on('browser-window-created', (_,win) => {
       await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => s.data.includes('ghci>'))`);
       await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution 10\\r')`);
       await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => /23[\\r\\n]/.test(s.data))`);
+      // Moving the terminal must preserve its instance, PTY state and unfinished input.
+      await evaluate(`window.smokeTerminal = document.querySelector('.xterm'); document.querySelector('.xterm-helper-textarea').focus()`);
+      await win.webContents.insertText('let layoutValue = 41');
+      await evaluate(`document.querySelector('[aria-label="GHCiをエディタの右に移動"]').click()`);
+      await until(`document.querySelector('.ghci-at-side #ghci-panel')`);
+      assert.ok(await evaluate(`window.smokeTerminal === document.querySelector('.xterm')`),'moving does not recreate xterm');
+      assert.ok(await evaluate(`!document.querySelector('.split-handle') && !document.querySelector('[role="tab"]')`));
+      assert.ok(await evaluate(`document.querySelector('#ghci-panel').getBoundingClientRect().left > document.querySelector('.editor-panel').getBoundingClientRect().left`));
+      const ghciWidth = await evaluate(`document.querySelector('#ghci-panel').getBoundingClientRect().width`);
+      await evaluate(`document.querySelector('[aria-label="GHCiの幅を調整"]').focus()`);
+      key('Left');
+      await until(`document.querySelector('#ghci-panel').getBoundingClientRect().width > ${ghciWidth}`);
+      assert.ok(await evaluate(`Math.abs(document.querySelector('.editor-panel').getBoundingClientRect().height - document.querySelector('.main-workspace').getBoundingClientRect().height) < 2`),'side layout gives the editor full height');
+      await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`);
+      key('Enter');
+      await win.webContents.insertText('layoutValue + 1'); key('Enter');
+      await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => /42[\\r\\n]/.test(s.data))`);
+      // The assistant overlays the workspace without resizing either split pane.
+      const paneWidths = await evaluate(`['.editor-panel','#ghci-panel'].map(selector => document.querySelector(selector).getBoundingClientRect().width)`);
+      await evaluate(`document.querySelector('[aria-label="AIサイドバーを開く"]').click()`);
+      await until(`!document.querySelector('#ai-sidebar-content').hidden`);
+      assert.ok(await evaluate(`(() => { const sidebar=document.querySelector('.assistant-overlay').getBoundingClientRect(); const workspace=document.querySelector('.workspace-area').getBoundingClientRect(); return sidebar.top === workspace.top && sidebar.right === workspace.right && sidebar.bottom === workspace.bottom && getComputedStyle(document.querySelector('.assistant-overlay')).borderRadius === '0px'; })()`),'overlay sidebar attaches to the right edge at full height');
+      assert.deepEqual(await evaluate(`['.editor-panel','#ghci-panel'].map(selector => document.querySelector(selector).getBoundingClientRect().width)`),paneWidths);
+      assert.ok(await evaluate(`(() => { const overlay=document.querySelector('.assistant-overlay').getBoundingClientRect(); const ghci=document.querySelector('#ghci-panel').getBoundingClientRect(); return overlay.left < ghci.right && overlay.right > ghci.left && !!document.elementFromPoint(overlay.left+20,overlay.top+20)?.closest('#assistant-panel'); })()`),'assistant appears above GHCi');
+      await evaluate(`document.querySelector('[aria-label="AIへの質問"]').focus()`);
+      key('Escape');
+      await until(`document.querySelector('.assistant-overlay').hidden && document.activeElement.closest('.editor-panel')`);
+      key('J',['control']); key('L');
+      await until(`document.activeElement.closest('#ghci-panel')`);
+      key('J',['control']); key('L');
+      await until(`document.activeElement.closest('#assistant-panel') && !document.querySelector('.assistant-overlay').hidden`);
+      key('J',['control']); key('H');
+      await until(`document.activeElement.closest('#ghci-panel') && document.querySelector('.assistant-overlay').hidden`);
+      await evaluate(`document.querySelector('.cm-content').focus()`);
+      key('J',['control','shift']);
+      await until(`document.activeElement.closest('#ghci-panel')`);
+      assert.equal(await evaluate(`localStorage.getItem('kata-ghci-layout')`),'side');
+      await evaluate(`document.querySelector('[aria-label="GHCiをエディタの下に移動"]').click()`);
+      await until(`document.querySelector('.split-workspace #ghci-panel') && document.querySelector('.split-handle')`);
+      assert.ok(await evaluate(`window.smokeTerminal === document.querySelector('.xterm')`));
+      assert.equal(await evaluate(`localStorage.getItem('kata-ghci-layout')`),'bottom');
+      // Exercise error consultation with the assistant overlay above the split.
+      await evaluate(`document.querySelector('[aria-label="GHCiをエディタの右に移動"]').click()`);
+      await until(`document.querySelector('.ghci-at-side #ghci-panel')`);
       await evaluate(`document.querySelector('.run-button').click()`);
       await until(`!document.querySelector('.run-button').disabled`);
       await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution "ten"\\r')`);
@@ -121,6 +166,15 @@ app.on('browser-window-created', (_,win) => {
       await evaluate(`document.querySelector('[data-problem-id="${problem.id}"]').click()`);
       await until(`document.querySelector('.problem-item[aria-current="page"]')?.dataset.problemId === ${JSON.stringify(problem.id)}`);
       assert.ok(await evaluate(`document.querySelector('.cm-content').textContent.includes('smoke edit')`));
+      await until(`document.querySelector('.ghci-at-side #ghci-panel')`);
+      await pause(150);
+      fs.writeFileSync(path.join(artifacts,'electron-ghci-side.png'),(await win.webContents.capturePage()).toPNG());
+      await evaluate(`document.querySelector('[aria-label="AIサイドバーを開く"]').click()`);
+      await until(`!document.querySelector('.assistant-overlay').hidden`);
+      await pause(150);
+      fs.writeFileSync(path.join(artifacts,'electron-ai-overlay.png'),(await win.webContents.capturePage()).toPNG());
+      await evaluate(`document.querySelector('[aria-label="AIサイドバーを閉じる"]').click(); document.querySelector('[aria-label="GHCiをエディタの下に移動"]').click()`);
+      await until(`document.querySelector('.split-handle')`);
       // Empty assistant and default layout for a clean visual QA image.
       await evaluate(`document.querySelector('[aria-label="AIへの質問"]').value = ''`);
       await pause(100);
