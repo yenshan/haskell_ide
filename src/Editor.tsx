@@ -7,6 +7,7 @@ import { haskellLanguage } from './haskellLanguage';
 import { editorAppearance } from './editorThemes';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { editorTypography, type FontSettings } from './fonts';
+import { closeCompletion, fileCompletion } from './fileCompletion';
 
 const layout = EditorView.theme({
   '&':{ height:'100%' },'.cm-scroller':{ overflow:'auto' },
@@ -25,7 +26,7 @@ export function Editor(props:Props) {
       ...(props.vimEnabled ? [vim()] : []), basicSetup, keymap.of([
         { key:'Mod-s', run:() => { current.current.onSave(); return true; } },
         { key:'Mod-Enter', run:() => { current.current.onRun(); return true; } }, indentWithTab
-      ]), haskellLanguage, layout, appearance.current.of(editorAppearance(current.current.theme)), typography.current.of(editorTypography(current.current.fontSettings)),
+      ]), haskellLanguage, fileCompletion(), layout, appearance.current.of(editorAppearance(current.current.theme)), typography.current.of(editorTypography(current.current.fontSettings)),
       EditorState.tabSize.of(2),
       EditorView.updateListener.of(update => {
         if (update.docChanged && !applyingExternal.current) current.current.onChange(update.state.doc.toString());
@@ -37,7 +38,10 @@ export function Editor(props:Props) {
     ] }) });
     view.current = editor;
     const cm = getCM(editor);
-    const modeChange = (event:{ mode:string; subMode?:string }) => current.current.onMode((event.subMode || event.mode).toUpperCase());
+    const modeChange = (event:{ mode:string; subMode?:string }) => {
+      current.current.onMode((event.subMode || event.mode).toUpperCase());
+      if (event.mode !== 'insert') queueMicrotask(() => { if (view.current === editor) closeCompletion(editor); });
+    };
     cm?.on('vim-mode-change', modeChange);
     current.current.onMode(props.vimEnabled ? 'NORMAL' : 'EDIT');
     return () => { editor.destroy(); view.current = null; };

@@ -45,6 +45,8 @@ export function editorAppearance(id:string) {
     '.cm-cursor, .cm-dropCursor':{ borderLeftColor:p.accent },
     '.cm-fat-cursor':{ backgroundColor:`${p.accent} !important`,color:`${p.background} !important` },
     '.cm-panels, .cm-tooltip':{ backgroundColor:p.gutter,color:p.text,borderColor:p.border },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected]':{ backgroundColor:p.selection,color:p.text },
+    '.cm-completionMatchedText':{ color:p.accent,fontWeight:'600',textDecoration:'none' },
     '.cm-search input, .cm-search button':{ color:p.text,background:p.background,border:`1px solid ${p.border}` },
     '&.cm-focused':{ outline:'none' },
     '.cm-matchingBracket':{ backgroundColor:p.selection,outline:`1px solid ${p.accent}` },
