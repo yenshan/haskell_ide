@@ -25,7 +25,7 @@ app.on('browser-window-created', (_,win) => {
     const pause = ms => new Promise(r => setTimeout(r,ms));
     async function until(code) { for(let i=0;i<100;i++) { const value = await evaluate(code); if(value) return value; await pause(60); } throw new Error('Timed out: '+code); }
     try {
-      await until(`document.querySelector('.terminal-entry') && document.querySelector('.cm-content')`);
+      await until(`document.querySelector('.xterm') && document.querySelector('.cm-content')`);
       assert.match(await evaluate('document.body.innerText'),/Multiples of 3 or 5/);
       // Native key events go through Vim and CodeMirror, then the app autosave.
       await evaluate(`document.querySelector('.cm-content').focus()`);
@@ -39,14 +39,16 @@ app.on('browser-window-created', (_,win) => {
       await until(`!document.querySelector('.dirty-dot')`);
       const problem = await evaluate(`window.kata.list().then(async list => window.kata.open(list[0].id))`);
       assert.match(problem.code,/smoke edit/);
-      const value = await evaluate(`window.kata.ghciRun(${JSON.stringify(problem.id)},'solution 10')`);
-      assert.equal(value.output,'23');
+      await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => s.data.includes('ghci>'))`);
+      await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution 10\\r')`);
+      await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => /23[\\r\\n]/.test(s.data))`);
       await evaluate(`document.querySelector('.run-button').click()`);
       await until(`!document.querySelector('.run-button').disabled`);
-      await evaluate(`window.kata.ghciRun(${JSON.stringify(problem.id)},'solution "ten"')`);
-      await until(`document.querySelector('.inline-ask')`);
-      await evaluate(`document.querySelector('.inline-ask').click()`);
-      assert.match(await evaluate(`document.querySelector('[aria-label="AIへの質問"]').value`),/Couldn't match/);
+      await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution "ten"\\r')`);
+      await until(`document.querySelector('.ask-error-button')`);
+      await evaluate(`document.querySelector('.ask-error-button').click()`);
+      assert.match(await evaluate(`document.querySelector('[aria-label="AIへの質問"]').value`),/エラーの原因/);
+      assert.ok(await evaluate(`!!document.querySelector('.attached-error')`));
       const artifacts = path.join(root,'artifacts'); fs.mkdirSync(artifacts,{ recursive:true });
       fs.writeFileSync(path.join(artifacts,'electron-smoke.png'),(await win.webContents.capturePage()).toPNG());
       await evaluate(`document.querySelector('.new-button').click()`);
@@ -54,7 +56,7 @@ app.on('browser-window-created', (_,win) => {
       // Submit the real creation form using its default filename.
       await evaluate(`document.querySelector('.new-modal').requestSubmit()`);
       await until(`document.querySelector('.problem-item[aria-current="page"]')?.dataset.problemId !== ${JSON.stringify(problem.id)} && document.querySelector('.problem-item[aria-current="page"] .file-name')?.textContent === 'Untitled.hs'`);
-      await until(`document.querySelector('.terminal-entry')`);
+      await until(`document.querySelector('.xterm')`);
       await evaluate(`document.querySelector('[data-problem-id="${problem.id}"]').click()`);
       await until(`document.querySelector('.problem-item[aria-current="page"]')?.dataset.problemId === ${JSON.stringify(problem.id)}`);
       assert.ok(await evaluate(`document.querySelector('.cm-content').textContent.includes('smoke edit')`));

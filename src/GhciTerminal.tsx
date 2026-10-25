@@ -1,0 +1,71 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import type { AppEvent } from './types';
+
+export type TerminalHandle = { focus:()=>void; capture:()=>{ text:string; selected:boolean } };
+type Props = { id:string; generation:number; onError:(error:unknown)=>void; onState:(alive:boolean)=>void };
+export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTerminal(props,ref) {
+  const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal|null>(null);
+  const current = useRef(props); current.current=props;
+  useImperativeHandle(ref,() => ({
+    focus:() => terminal.current?.focus(),
+    capture:() => {
+      const term=terminal.current; if (!term) return { text:'',selected:false };
+      const selection=term.getSelection(); if (selection.trim()) return { text:selection.slice(-20000),selected:true };
+      const buffer=term.buffer.active; let text='';
+      for (let row=Math.max(0,buffer.length-160);row<buffer.length;row++) {
+        const line=buffer.getLine(row); if (!line) continue;
+        text += (line.isWrapped?'':'\n')+line.translateToString(true);
+      }
+      return { text:text.trim().slice(-20000),selected:false };
+    }
+  }),[]);
+  useEffect(() => {
+    if (!host.current) return;
+    const { id }=props; let disposed=false, initialized=false, exited=false, sequence=0;
+    const pending:Extract<AppEvent,{type:'ghci-data'}>[]=[];
+    const term=new Terminal({
+      cursorBlink:true,cursorStyle:'block',scrollback:5000,fontSize:12,lineHeight:1.35,
+      fontFamily:'"SFMono-Regular", Menlo, Consolas, monospace',
+      theme:{ background:'#ffffff',foreground:'#293329',cursor:'#4b6e36',cursorAccent:'#ffffff',selectionBackground:'#dbe9cf',
+        black:'#293329',red:'#a04432',green:'#3c6c36',yellow:'#88621b',blue:'#365f9a',magenta:'#7750a3',cyan:'#267578',white:'#657267',
+        brightBlack:'#667165',brightRed:'#b2382b',brightGreen:'#477c36',brightYellow:'#9a6516',brightBlue:'#416fb0',brightMagenta:'#8b50b3',brightCyan:'#267578',brightWhite:'#293329' }
+    });
+    const fit=new FitAddon(); term.loadAddon(fit); term.open(host.current); terminal.current=term;
+    term.attachCustomKeyEventHandler(event => {
+      if (event.type==='keydown' && ((event.metaKey && event.key==='c') || (event.ctrlKey && event.shiftKey && event.key.toLowerCase()==='c')) && term.hasSelection()) {
+        event.preventDefault(); navigator.clipboard.writeText(term.getSelection()).catch(current.current.onError); return false;
+      }
+      // Let application shortcuts bubble; ordinary terminal keys go to GHCi.
+      if ((event.metaKey || (event.ctrlKey && event.shiftKey)) && ['s','n','j','/','Enter'].includes(event.key)) return false;
+      return true;
+    });
+    const onData=term.onData(data => { if (initialized && !exited) window.kata.ghciWrite(id,data).catch(current.current.onError); });
+    const onResize=term.onResize(({ cols,rows }) => { if (initialized) window.kata.ghciResize(id,cols,rows).catch(current.current.onError); });
+    const unsubscribe=window.kata.onEvent(event => {
+      if (event.type==='ghci-data' && event.id===id) {
+        if (!initialized) pending.push(event);
+        else if (event.seq>sequence) { sequence=event.seq; term.write(event.data); }
+      }
+      if (event.type==='ghci-exit' && event.id===id) {
+        exited=true;
+        term.writeln(`\r\n[GHCi終了。右上の ↻ で再起動できます]`); current.current.onState(false);
+      }
+    });
+    const size=() => { if (!disposed && host.current?.clientWidth && host.current.clientHeight) fit.fit(); };
+    size(); const observer=new ResizeObserver(size); observer.observe(host.current);
+    document.fonts.ready.then(size);
+    window.kata.ghciStart(id,term.cols,term.rows).then(snapshot => {
+      if (disposed) return;
+      sequence=snapshot.seq; term.write(snapshot.data); initialized=true;
+      for (const event of pending) if (event.seq>sequence) { sequence=event.seq; term.write(event.data); }
+      pending.length=0; size();
+      window.kata.ghciResize(id,term.cols,term.rows).catch(current.current.onError);
+      current.current.onState(snapshot.alive && !exited);
+    }).catch(error => { if (!disposed) { term.writeln(String(error)); current.current.onState(false); current.current.onError(error); } });
+    return () => { disposed=true; observer.disconnect(); unsubscribe(); onData.dispose(); onResize.dispose(); term.dispose(); terminal.current=null; };
+  },[props.id,props.generation]);
+  return <div className="ghci-terminal" ref={host} aria-label="GHCiターミナル"/>;
+});

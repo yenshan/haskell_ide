@@ -4,10 +4,39 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { Store } = require('../electron/store.cjs');
-const { Ghci } = require('../electron/ghci.cjs');
+const { Ghci, diagnosticText } = require('../electron/ghci.cjs');
 const { Codex } = require('../electron/codex.cjs');
 const { Workspace, migrateLegacy } = require('../electron/workspace.cjs');
 async function temporary(t) { const root = await fs.mkdtemp(path.join(os.tmpdir(),'kata-test-')); t.after(() => fs.rm(root,{ recursive:true,force:true })); return root; }
+
+test('window state survives restart and remains visible after display changes or corrupt settings', async t => {
+  const { EventEmitter } = require('node:events');
+  const { restoreWindowState,trackWindowState } = require('../electron/window-state.cjs');
+  const file = path.join(await temporary(t),'window-state.json');
+  const primary = { workArea:{ x:0,y:25,width:1440,height:875 } };
+  const secondary = { workArea:{ x:-1920,y:0,width:1920,height:1080 } };
+  let displays = [primary,secondary];
+  const screen = { getAllDisplays:() => displays,getPrimaryDisplay:() => primary };
+  const win = new EventEmitter();
+  let minimized = false, maximized = true;
+  Object.assign(win,{
+    isDestroyed:() => false,isMinimized:() => minimized,isFullScreen:() => false,isMaximized:() => maximized,
+    getNormalBounds:() => ({ x:-1800,y:80,width:1200,height:800 })
+  });
+  trackWindowState(win,file,{ maximized:false });
+  win.emit('resize'); win.emit('close');
+  assert.deepEqual(restoreWindowState(file,screen).bounds,win.getNormalBounds());
+  assert.equal(restoreWindowState(file,screen).maximized,true);
+  minimized = true; maximized = false; win.emit('close');
+  assert.equal(restoreWindowState(file,screen).maximized,true,'minimizing does not lose maximized state');
+  win.emit('closed');
+  displays = [primary];
+  assert.deepEqual(restoreWindowState(file,screen).bounds,{ x:120,y:63,width:1200,height:800 });
+  await fs.writeFile(file,JSON.stringify({ x:1400,y:850,width:3000,height:2000 }));
+  assert.deepEqual(restoreWindowState(file,screen).bounds,{ x:0,y:25,width:1440,height:875 });
+  await fs.writeFile(file,'broken JSON');
+  assert.deepEqual(restoreWindowState(file,screen).bounds,{ x:0,y:25,width:1440,height:875 });
+});
 
 test('opens existing Haskell files sorted by modification date and saves only .hs files', async t => {
   const root = await temporary(t);
@@ -87,41 +116,79 @@ test('legacy code is migrated without overwrites and originals are retained outs
 
 const example = 'module Solution where\nsolution :: Integer -> Integer\nsolution n = sum [x | x <- [1 .. n-1], x `mod` 3 == 0 || x `mod` 5 == 0]\n';
 
-test('real GHCi loads, evaluates, detects compile/runtime errors, reloads and isolates sessions', { timeout:20000 }, async t => {
-  const root = await temporary(t); const store = new Store(root); await store.init();
-  const item = await store.create('Solution.hs',example); const events = []; const ghci = new Ghci(e => events.push(e),process.env.KATA_GHCI || 'ghci'); t.after(() => ghci.close());
-  const loaded = await ghci.start(item.id,store.file(item.id)); assert.equal(loaded.failed,false);
-  assert.equal((await ghci.run(item.id,'solution 10')).output,'23');
-  assert.equal((await ghci.run(item.id,':t solution')).output,'solution :: Integer -> Integer');
-  const bad = await ghci.run(item.id,'solution "ten"'); assert.equal(bad.failed,true); assert.match(bad.output,/Couldn't match/);
-  const exception = await ghci.run(item.id,'head ([] :: [Int])'); assert.equal(exception.failed,true); assert.match(exception.output,/Exception/);
+async function waitFor(predicate, timeout=7000) {
+  const deadline=Date.now()+timeout;
+  while (Date.now()<deadline) { const value=predicate(); if(value) return value; await new Promise(resolve=>setTimeout(resolve,15)); }
+  throw new Error('Timed out waiting for GHCi terminal output');
+}
+async function ghciHarness(t) {
+  const root=await temporary(t); const store=new Store(root); await store.init();
+  const item=await store.create('Solution.hs',example); const events=[], output={};
+  const ghci=new Ghci(event=>{ events.push(event); if(event.type==='ghci-data') output[event.id]=(output[event.id] || '')+event.data; },process.env.KATA_GHCI || 'ghci',{ env:{ HOME:root } });
+  t.after(()=>ghci.close());
+  ghci.start(item.id,store.file(item.id)); await waitFor(()=>/ghci>/.test(output[item.id] || ''));
+  async function send(command,pattern,id=item.id) {
+    const offset=(output[id] || '').length;
+    ghci.write(id,command);
+    return waitFor(()=>{ const text=diagnosticText((output[id] || '').slice(offset)); return pattern.test(text) && text; });
+  }
+  return { root,store,item,ghci,events,output,send };
+}
+
+test('real PTY GHCi evaluates, captures diagnostics, reloads, resizes, and isolates files', { timeout:25000 }, async t=>{
+  const { store,item,ghci,events,output,send }=await ghciHarness(t);
+  await send('solution 10\r',/(?:^|\n)23(?:\n|$)/);
+  await send(':t solution\r',/solution :: Integer -> Integer/);
+  await send('solution "ten"\r',/Couldn't match/);
+  await waitFor(()=>events.some(e=>e.type==='ghci-diagnostic' && /Couldn't match/.test(e.diagnostic.output)));
+  await send('head ([] :: [Int])\r',/Exception: Prelude.head/);
+  await waitFor(()=>events.some(e=>e.type==='ghci-diagnostic' && /Exception: Prelude.head/.test(e.diagnostic.output)));
   await store.save(item.id,'module Solution where\nsolution :: Integer -> Integer\nsolution n = n * 2\n');
-  assert.equal((await ghci.run(item.id,':reload')).failed,false);
-  assert.equal((await ghci.run(item.id,'solution 10')).output,'20');
-  const other = await store.create('Other'); await ghci.start(other.id,store.file(other.id));
-  assert.equal((await ghci.run(other.id,'solve [1,2,3]')).output,'6');
-  assert.equal((await ghci.run(item.id,'solution 5')).output,'10');
-  assert.equal((await ghci.run(item.id,'let double x =\n      x * 2')).failed,false);
-  assert.equal((await ghci.run(item.id,'double 4')).output,'8');
+  const beforeReload=output[item.id].length;
+  await ghci.reload(item.id); await waitFor(()=>/Ok, one module loaded/.test(output[item.id].slice(beforeReload)));
+  await send('solution 10\r',/(?:^|\n)20(?:\n|$)/);
+  ghci.resize(item.id,100,30);
+  await send(':! stty size\r',/30 100/);
+  const snapshot=ghci.start(item.id,store.file(item.id));
+  assert.equal(snapshot.cols,100); assert.equal(snapshot.rows,30); assert.ok(snapshot.seq>0); assert.match(snapshot.data,/solution/);
+  const other=await store.create('Other'); ghci.start(other.id,store.file(other.id));
+  await waitFor(()=>/ghci>/.test(output[other.id] || ''));
+  await send('solve [1,2,3]\r',/(?:^|\n)6(?:\n|$)/,other.id);
+  await send('solution 5\r',/(?:^|\n)10(?:\n|$)/);
+  await send(':{\rlet double x =\r      x * 2\r:}\r',/ghci>/);
+  await send('double 4\r',/(?:^|\n)8(?:\n|$)/);
   await store.save(item.id,'module Solution where\nsolution = missingName\n');
-  assert.equal((await ghci.run(item.id,':reload')).failed,true);
-  assert.ok(events.some(e => e.type==='ghci-result' && e.result.failed));
+  await send(':reload\r',/not in scope.*missingName/i);
 });
 
-test('GHCi interrupt recovers from non-terminating expressions', { timeout:10000 }, async t => {
-  const root = await temporary(t); const store = new Store(root); await store.init();
-  const item = await store.create('Solution.hs',example); const ghci = new Ghci(() => {},process.env.KATA_GHCI || 'ghci'); t.after(() => ghci.close());
-  await ghci.start(item.id,store.file(item.id));
-  const running = ghci.run(item.id,'sum [1..]');
-  setTimeout(() => ghci.interrupt(item.id),250);
-  const result = await running; assert.match(result.output,/Interrupted|interrupt|Exception/i);
-  assert.equal((await ghci.run(item.id,'1 + 1')).output,'2');
+test('real PTY supports interactive getLine, Ctrl+C recovery, :quit and restart', { timeout:20000 }, async t=>{
+  const { store,item,ghci,output,send }=await ghciHarness(t);
+  ghci.write(item.id,'getLine >>= (putStrLn . ("INPUT:" ++))\r');
+  await new Promise(resolve=>setTimeout(resolve,250));
+  await send('hello\r',/INPUT:hello/);
+  ghci.write(item.id,'sum [1..]\r'); await new Promise(resolve=>setTimeout(resolve,250));
+  await send('\x03',/Interrupted|Exception.*interrupt/i);
+  await send('1 + 1\r',/(?:^|\n)2(?:\n|$)/);
+  await send(':quit\r',/Leaving GHCi/);
+  await waitFor(()=>!ghci.sessions.has(item.id));
+  output[item.id]=''; await ghci.restart(item.id,store.file(item.id));
+  await waitFor(()=>/ghci>/.test(output[item.id] || ''));
+  await send('solution 7\r',/(?:^|\n)14(?:\n|$)/);
 });
 
-test('missing GHCi reports an actionable error', async t => {
-  const root = await temporary(t); const store = new Store(root); await store.init();
-  const item = await store.create('Solution.hs',example); const ghci = new Ghci(() => {},'/missing/ghci'); t.after(() => ghci.close());
-  await assert.rejects(ghci.start(item.id,store.file(item.id)),/GHCiを起動できません/);
+test('GHCi native Tab completion and arrow-key history', { timeout:15000 }, async t=>{
+  // Haskeline needs /dev/tty even when inherited descriptors are all TTYs.
+  // The Codex sandbox can forbid opening that device; report this as a skip.
+  const pty=require('node-pty');
+  let probeOutput='';
+  const probe=pty.spawn(process.execPath,['-e',"try { require('node:fs').closeSync(require('node:fs').openSync('/dev/tty','r+')); console.log('TTY_OK'); } catch(e) { console.log('TTY_BLOCKED:'+e.code); }"],{name:'xterm-256color'});
+  probe.onData(data=>probeOutput+=data);
+  await new Promise(resolve=>probe.onExit(resolve));
+  if(!probeOutput.includes('TTY_OK')) { t.skip('Haskeline terminal device unavailable: '+probeOutput.trim()); return; }
+  const { send,output,item }=await ghciHarness(t);
+  await send('solu\t 10\r',/(?:^|\n)23(?:\n|$)/);
+  await send('\x1b[A\r',/(?:^|\n)23(?:\n|$)/);
+  assert.doesNotMatch(output[item.id],/Tab character found/);
 });
 
 test('Codex streams per-file ephemeral conversations without writing local metadata', { timeout:10000 }, async t => {

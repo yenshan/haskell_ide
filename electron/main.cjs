@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, nativeTheme, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, nativeTheme, dialog, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { Workspace } = require('./workspace.cjs');
 const { Ghci } = require('./ghci.cjs');
 const { Codex } = require('./codex.cjs');
+const { restoreWindowState, trackWindowState } = require('./window-state.cjs');
 const root = path.resolve(__dirname, '..');
 if (!app.isPackaged) {
   const runtime = process.env.KATA_RUNTIME || path.join(root, '.runtime'); fs.mkdirSync(runtime, { recursive:true });
@@ -51,16 +52,18 @@ app.whenReady().then(async () => {
       return info;
     },
     'problems:reveal': (_, id) => shell.showItemInFolder(store.file(id)),
-    'ghci:start': (_, id) => ghci.start(id, store.file(id)),
-    'ghci:run': (_, id, cmd) => { if (typeof cmd !== 'string' || cmd.length > 50000 || !cmd.trim()) throw new Error('実行式を入力してください'); return ghci.run(id, cmd); },
-    'ghci:interrupt': (_, id) => ghci.interrupt(id),
-    'ghci:restart': async (_, id) => { const s = ghci.sessions.get(id); if (s) { ghci.stop(id); await new Promise(resolve => { if (s.closed) resolve(); else s.proc.once('exit', resolve); }); } return ghci.start(id, store.file(id)); },
+    'ghci:start': (_, id, cols=80, rows=24) => { dimensions(cols,rows); return ghci.start(id,store.file(id),cols,rows); },
+    'ghci:write': (_, id, data) => { store.find(id); if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('端末入力が大きすぎます'); ghci.write(id,data); },
+    'ghci:resize': (_, id, cols, rows) => { store.find(id); dimensions(cols,rows); ghci.resize(id,cols,rows); },
+    'ghci:reload': (_, id) => { store.find(id); return ghci.reload(id); },
+    'ghci:restart': (_, id) => ghci.restart(id,store.file(id)),
     'codex:connect': () => codex.connect(),
     'codex:status': () => codex.status,
     'codex:ask': (_, id, text, context, model) => codex.ask(id, text, context, model),
     'codex:interrupt': (_, id) => codex.interrupt(id),
     'app:close-ready': async () => { await store.writes; closeAllowed = true; win.close(); }
   };
+  function dimensions(cols,rows) { if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols<2 || cols>1000 || rows<1 || rows>500) throw new Error('端末サイズが不正です'); }
   for (const [channel, handler] of Object.entries(handlers)) ipcMain.handle(channel, (event, ...args) => {
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error('Unknown sender');
     return handler(event, ...args);
@@ -68,7 +71,12 @@ app.whenReady().then(async () => {
   ipcMain.on('app:renderer-ready', event => { if (event.sender === win?.webContents) rendererReady = true; });
   function createWindow() {
     closeAllowed = false; rendererReady = false;
-    win = new BrowserWindow({ width:1512, height:980, minWidth:1100, minHeight:700, backgroundColor:'#ffffff', title:'Kata — Haskell workspace', titleBarStyle:'hiddenInset', trafficLightPosition:{ x:20, y:20 }, webPreferences:{ preload:path.join(__dirname,'preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true } });
+    const stateFile = path.join(app.getPath('userData'),'window-state.json');
+    const state = restoreWindowState(stateFile,screen);
+    win = new BrowserWindow({ ...state.bounds, minWidth:state.minWidth, minHeight:state.minHeight, show:false, backgroundColor:'#ffffff', title:'Kata — Haskell workspace', titleBarStyle:'hiddenInset', trafficLightPosition:{ x:20, y:20 }, webPreferences:{ preload:path.join(__dirname,'preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true } });
+    if (state.maximized) win.maximize();
+    trackWindowState(win,stateFile,state);
+    win.once('ready-to-show',() => win.show());
     win.webContents.setWindowOpenHandler(() => ({ action:'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
     win.webContents.on('render-process-gone', () => { rendererReady = false; });
@@ -87,4 +95,4 @@ app.whenReady().then(async () => {
   ]));
   createWindow(); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 }).catch(error => { console.error(error); app.quit(); });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', async () => { await ghci?.close(); app.quit(); });
