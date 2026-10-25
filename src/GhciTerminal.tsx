@@ -4,17 +4,18 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { AppEvent } from './types';
 
-export type TerminalHandle = { focus:()=>void };
+export type TerminalHandle = { focus:()=>void; dimensions:()=>{ cols:number; rows:number } };
 type Props = { id:string; generation:number; onError:(error:unknown)=>void; onState:(alive:boolean)=>void };
 export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTerminal(props,ref) {
   const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal|null>(null);
   const current = useRef(props); current.current=props;
   useImperativeHandle(ref,() => ({
-    focus:() => terminal.current?.focus()
+    focus:() => terminal.current?.focus(),
+    dimensions:() => ({ cols:terminal.current?.cols || 80,rows:terminal.current?.rows || 24 })
   }),[]);
   useEffect(() => {
     if (!host.current) return;
-    const { id }=props; let disposed=false, initialized=false, exited=false, sequence=0;
+    const { id }=props; let disposed=false, initialized=false, exited=true, sequence=0, placeholder=false;
     const pending:Extract<AppEvent,{type:'ghci-data'}>[]=[];
     const term=new Terminal({
       cursorBlink:true,cursorStyle:'block',scrollback:5000,fontSize:12,lineHeight:1.35,
@@ -34,27 +35,36 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
       return true;
     });
     const onData=term.onData(data => { if (initialized && !exited) window.kata.ghciWrite(id,data).catch(current.current.onError); });
-    const onResize=term.onResize(({ cols,rows }) => { if (initialized) window.kata.ghciResize(id,cols,rows).catch(current.current.onError); });
+    const onResize=term.onResize(({ cols,rows }) => { if (initialized && !exited) window.kata.ghciResize(id,cols,rows).catch(current.current.onError); });
+    const write = (event:Extract<AppEvent,{type:'ghci-data'}>) => {
+      if (event.seq <= sequence) return;
+      if (placeholder) { term.reset(); placeholder=false; }
+      if (exited) { exited=false; current.current.onState(true); window.kata.ghciResize(id,term.cols,term.rows).catch(current.current.onError); }
+      sequence=event.seq; term.write(event.data);
+    };
     const unsubscribe=window.kata.onEvent(event => {
       if (event.type==='ghci-data' && event.id===id) {
         if (!initialized) pending.push(event);
-        else if (event.seq>sequence) { sequence=event.seq; term.write(event.data); }
+        else write(event);
       }
       if (event.type==='ghci-exit' && event.id===id) {
-        exited=true;
+        exited=true; sequence=0; placeholder=true;
         term.writeln(`\r\n[GHCi終了。右上の ↻ で再起動できます]`); current.current.onState(false);
       }
     });
     const size=() => { if (!disposed && host.current?.clientWidth && host.current.clientHeight) fit.fit(); };
     size(); const observer=new ResizeObserver(size); observer.observe(host.current);
     document.fonts.ready.then(size);
-    window.kata.ghciStart(id,term.cols,term.rows).then(snapshot => {
+    window.kata.ghciSnapshot(id).then(snapshot => {
       if (disposed) return;
-      sequence=snapshot.seq; term.write(snapshot.data); initialized=true;
-      for (const event of pending) if (event.seq>sequence) { sequence=event.seq; term.write(event.data); }
+      sequence=snapshot?.seq || 0; exited=!snapshot?.alive;
+      if (snapshot) term.write(snapshot.data);
+      else { term.writeln('⌘Enter / Ctrl+Enter または「読込」でGHCiを起動します。'); placeholder=true; }
+      initialized=true;
+      for (const event of pending) write(event);
       pending.length=0; size();
-      window.kata.ghciResize(id,term.cols,term.rows).catch(current.current.onError);
-      current.current.onState(snapshot.alive && !exited);
+      if (!exited) window.kata.ghciResize(id,term.cols,term.rows).catch(current.current.onError);
+      current.current.onState(!exited);
     }).catch(error => { if (!disposed) { term.writeln(String(error)); current.current.onState(false); current.current.onError(error); } });
     return () => { disposed=true; observer.disconnect(); unsubscribe(); onData.dispose(); onResize.dispose(); term.dispose(); terminal.current=null; };
   },[props.id,props.generation]);

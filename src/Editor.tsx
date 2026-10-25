@@ -8,6 +8,8 @@ import { editorAppearance } from './editorThemes';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { editorTypography, type FontSettings } from './fonts';
 import { closeCompletion, fileCompletion } from './fileCompletion';
+import { inlineDiagnostics, inlineDiagnosticTheme, setInlineDiagnostics } from './inlineDiagnostics';
+import type { InlineDiagnostic } from './types';
 
 const layout = EditorView.theme({
   '&':{ height:'100%' },'.cm-scroller':{ overflow:'auto' },
@@ -15,7 +17,7 @@ const layout = EditorView.theme({
   '.cm-gutters':{ minWidth:'0' },'.cm-lineNumbers .cm-gutterElement':{ padding:'0 8px' },
   '.cm-foldGutter':{ display:'none' }
 });
-type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; theme:string; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
+type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; theme:string; diagnostics:InlineDiagnostic[]; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
 export function Editor(props:Props) {
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView|null>(null); const current = useRef(props); current.current = props;
   const applyingExternal = useRef(false);
@@ -26,9 +28,10 @@ export function Editor(props:Props) {
     const editor = new EditorView({ parent:host.current, state:EditorState.create({ doc:current.current.code, extensions:[
       ...(props.vimEnabled ? [vim()] : []), basicSetup, keymap.of([
         { key:'Mod-s', run:() => { current.current.onSave(); return true; } },
+        { key:'Mod-Shift-Enter', run:() => { current.current.onRun(); return true; } },
         { key:'Mod-Enter', run:() => { current.current.onRun(); return true; } }, indentWithTab
       ]), haskellLanguage, fileCompletion(), layout, appearance.current.of(editorAppearance(current.current.theme)), typography.current.of(editorTypography(current.current.fontSettings)),
-      EditorState.tabSize.of(2),
+      EditorState.tabSize.of(2), inlineDiagnostics,inlineDiagnosticTheme,
       EditorView.updateListener.of(update => {
         if (update.docChanged && !applyingExternal.current) current.current.onChange(update.state.doc.toString());
         if (update.selectionSet || update.docChanged) {
@@ -66,5 +69,8 @@ export function Editor(props:Props) {
       finally { applyingExternal.current = false; }
     }
   }, [props.code]);
+  useEffect(() => {
+    view.current?.dispatch({ effects:setInlineDiagnostics.of(props.diagnostics) });
+  },[props.diagnostics,props.id,props.vimEnabled]);
   return <div ref={host} className="editor-mount" aria-label="Haskellコードエディタ"/>;
 }

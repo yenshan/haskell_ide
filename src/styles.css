@@ -65,6 +65,9 @@ button svg{vertical-align:middle}
 .tab-saved{margin-left:5px;color:var(--text-subtle);display:flex}
 .dirty-dot{width:5px;height:5px;border-radius:100%;background:var(--warning);margin-left:5px}
 .editor-tools{display:flex;align-items:center;gap:8px;padding-right:14px}
+.load-button{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--accent-border);border-radius:4px;background:var(--accent-soft);color:var(--accent);font-size:10px}
+.load-button:hover{background:var(--surface-hover)}
+.load-button kbd{font-size:9px;margin-left:4px}
 .vim-toggle{font-family:Menlo,monospace;font-size:10px;color:var(--text-muted);padding:3px 0}
 .vim-toggle span{font-size:8px;color:var(--text-muted);border:1px solid var(--accent-border);padding:1px 3px;margin-left:4px;border-radius:3px}
 .vim-toggle:not(.on) span{color:var(--text-muted);border-color:var(--border)}
@@ -229,3 +232,9 @@ button svg{vertical-align:middle}
 .assistant-launcher{position:absolute;right:0;top:0;bottom:0;width:42px;z-index:10;display:flex;flex-direction:column;align-items:center;gap:10px;padding:13px 0;background:var(--surface-muted);border-left:1px solid var(--border);color:var(--accent)}
 .assistant-launcher>span{display:none}
 .assistant-launcher:hover{background:var(--accent-soft)}
+
+.ghci-status-popup{position:fixed;right:18px;bottom:46px;z-index:80;display:flex;align-items:flex-start;gap:10px;width:min(460px,calc(100vw - 36px));max-height:40vh;overflow:auto;padding:12px 14px;border:1px solid var(--accent-border);border-radius:8px;background:var(--accent-soft);box-shadow:0 8px 32px #29332924;color:var(--text);font-size:11px;line-height:1.8;overflow-wrap:anywhere}
+.ghci-status-popup>svg{margin-top:3px;color:var(--accent)}
+.ghci-status-message{flex:1;min-width:0}
+.ghci-status-message p{margin:8px 0 0}
+.ghci-status-popup>.icon-button{margin:-2px -4px 0 0}

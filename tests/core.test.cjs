@@ -6,6 +6,7 @@ const path = require('node:path');
 const { Store } = require('../electron/store.cjs');
 const { Ghci, diagnosticText } = require('../electron/ghci.cjs');
 const { Codex } = require('../electron/codex.cjs');
+const { GhciDiagnostics,parseDiagnostics } = require('../electron/ghci-diagnostics.cjs');
 const { Workspace, migrateLegacy } = require('../electron/workspace.cjs');
 async function temporary(t) { const root = await fs.mkdtemp(path.join(os.tmpdir(),'kata-test-')); t.after(() => fs.rm(root,{ recursive:true,force:true })); return root; }
 
@@ -226,7 +227,7 @@ rl.on('line', line => { const m = JSON.parse(line); let result = {}; fs.appendFi
   assert.deepEqual(codex.status.models.map(model => model.id),['test','fast']);
   assert.deepEqual(codex.status.models[0].supportedReasoningEfforts.map(option => option.effort),['medium','high']);
   assert.equal(codex.status.defaultModel,'test');
-  await codex.ask(item.id,'ヒントをください','solution 10\n23','test','high');
+  await codex.ask(item.id,'ヒントをください','solution 10\n23','test','high',example+'\n-- unsaved chat context');
   await new Promise(r => setTimeout(r,100));
   assert.equal(store.find(item.id).threadId,'thread-test');
   assert.equal(store.find(item.id).messages.at(-1).text,'型を確認しましょう。');
@@ -245,6 +246,8 @@ rl.on('line', line => { const m = JSON.parse(line); let result = {}; fs.appendFi
   const requests = (await fs.readFile(path.join(root,'rpc.log'),'utf8')).trim().split('\n').map(JSON.parse);
   const turns = requests.filter(request => request.method === 'turn/start').map(request => request.params);
   assert.deepEqual(turns.map(turn => [turn.model,turn.effort]),[['test','high'],['test','medium'],['fast','high'],['fast','low']]);
+  assert.match(turns[0].input[0].text,/unsaved chat context/);
+  assert.equal((await store.open(item.id)).code,example,'asking about unsaved code does not save it');
   for (const request of requests.filter(request => ['thread/start','thread/resume'].includes(request.method))) {
     assert.equal(request.params.config.web_search,'live');
     assert.equal(request.params.config['features.shell_tool'],false);
@@ -259,4 +262,127 @@ rl.on('line', line => { const m = JSON.parse(line); let result = {}; fs.appendFi
   assert.deepEqual(reopened.find(item.id).messages,[]);
   assert.equal(reopened.find(item.id).threadId,null);
   assert.equal((await fs.readdir(root)).some(name => name.endsWith('.json')),false);
+});
+
+test('GHCi starts on explicit load, reloads the same session, and analyzes only current output', { timeout:15000 }, async t => {
+  const root = await temporary(t), store = new Store(root); await store.init();
+  const item = await store.create('Load.hs','module Load where\nanswer :: Int\nanswer = 42\n');
+  const events = [], ghci = new Ghci(e => events.push(e),process.env.KATA_GHCI || 'ghci',{ env:{ HOME:root } });
+  t.after(() => ghci.close());
+  const diagnostics = new GhciDiagnostics(store,ghci);
+  assert.equal(ghci.peek(item.id),null,'reading a snapshot does not start GHCi');
+  await store.open(item.id); assert.equal(ghci.sessions.size,0,'opening a file does not start GHCi');
+  const success = await diagnostics.load(item.id,100,30);
+  assert.equal(success.success,true,success.output);
+  assert.deepEqual(success.diagnostics,[]);
+  const session = ghci.sessions.get(item.id), pid = session.proc.pid;
+  assert.equal(ghci.peek(item.id).cols,100);
+  const never = { explainDiagnostics:() => { throw new Error('must not call AI on success'); } };
+  assert.equal(await diagnostics.explain(item.id,success.token,never),success);
+  await store.save(item.id,'module Load where\nanswer :: Int\nanswer = "wrong"\n');
+  const failure = await diagnostics.load(item.id);
+  assert.equal(ghci.sessions.get(item.id).proc.pid,pid,'reload preserves the PTY process');
+  assert.equal(failure.success,false,failure.output);
+  assert.equal(failure.diagnostics[0].line,3);
+  assert.equal(failure.diagnostics[0].severity,'error');
+  assert.match(failure.diagnostics[0].message,/Couldn't match/);
+  const ai = { explainDiagnostics:async report => { assert.equal(report.source,failure.source); return new Map([[0,{ displayLine:2,explanation:'Intが必要な場所に文字列があります。数値に直してください。' }]]); } };
+  const enriched = await diagnostics.explain(item.id,failure.token,ai);
+  assert.match(enriched.diagnostics[0].explanation,/Int/);
+  assert.equal(enriched.diagnostics[0].line,3,'preserve the original GHCi location');
+  assert.equal(enriched.diagnostics[0].displayLine,2,'use the AI-selected location for display');
+  await assert.rejects(diagnostics.explain(item.id,success.token,ai),/再読み込み/);
+  await store.save(item.id,'module Load where\nanswer = 42\n');
+  await assert.rejects(diagnostics.explain(item.id,failure.token,ai),/再読み込み/);
+  const recovered = await diagnostics.load(item.id);
+  assert.equal(recovered.success,true,recovered.output);
+  assert.doesNotMatch(recovered.output,/Couldn't match/,'old errors are excluded from new load output');
+  assert.deepEqual(recovered.diagnostics,[]);
+  // Errors from direct terminal input also become reports, with no invented source line.
+  ghci.write(item.id,'head ([] :: [Int])\r');
+  await waitFor(() => events.some(e => e.type === 'ghci-diagnostic' && /Exception: Prelude.head/.test(e.diagnostic.output)));
+  const runtime = await diagnostics.latest(item.id);
+  assert.equal(runtime.success,false); assert.equal(runtime.diagnostics[0].line,0);
+  assert.match(runtime.output,/Exception: Prelude.head/);
+  // Literal prompt-looking source output must not finish an in-flight load.
+  assert.deepEqual(await fs.readdir(root),['Load.hs']);
+  await ghci.stop(item.id);
+  assert.equal(ghci.peek(item.id),null);
+  await store.save(item.id,'module Load where\nanswer :: Int\nanswer = "bad on first load"\n');
+  const firstFailure = await diagnostics.load(item.id);
+  assert.equal(firstFailure.success,false,'a new GHCi session also captures initial load failures');
+  assert.equal(firstFailure.diagnostics[0].line,3);
+  await store.save(item.id,'module Load where\nanswer = 42\n');
+  assert.equal((await diagnostics.load(item.id)).success,true,'the restarted session can recover by reloading');
+});
+
+test('GHCi diagnostics parse ranges and warnings without assigning dependency errors to the open file', () => {
+  const file = path.resolve('/tmp/日本語.hs');
+  const output = 'Other.hs:1:1: error: dependency\n日本語.hs:(2,3)-(3,4): error: [GHC-12345]\n  bad type\n日本語.hs:3:1-9: warning: unused\n';
+  const parsed = parseDiagnostics(output,file,'module X where\nx = 1\ny = 2\n');
+  assert.deepEqual(parsed.map(d => [d.line,d.column,d.severity]),[[2,3,'error'],[3,1,'warning']]);
+  assert.match(parsed[0].message,/bad type/);
+  assert.deepEqual(parseDiagnostics('日本語.hs:20:1: error: out of range',file,'x = 1'),[]);
+});
+
+test('background AI uses structured output, isolates chat, validates indexes and handles failures', { timeout:10000 }, async t => {
+  const root = await temporary(t), store = new Store(root); await store.init();
+  const script = path.join(root,'diagnostic-codex.cjs');
+  await fs.writeFile(script,`#!/usr/bin/env node
+const fs = require('node:fs');
+const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
+let serial = 0;
+require('node:readline').createInterface({ input:process.stdin }).on('line',line => {
+  const m = JSON.parse(line); let result = {};
+  fs.appendFileSync('requests.log',line+'\\n');
+  if (m.method === 'account/read') result = { requiresOpenaiAuth:false };
+  if (m.method === 'model/list') result = { data:[] };
+  if (m.method === 'config/read') result = { config:{} };
+  if (m.method === 'thread/start') result = { thread:{ id:'thread-'+(++serial) } };
+  if (m.method === 'turn/start') {
+    result = { turn:{ id:'turn-'+serial } };
+    setTimeout(() => {
+      const threadId=m.params.threadId, source=m.params.input[0].text;
+      if (source.includes('DISCONNECT')) return process.exit(1);
+      if (m.params.outputSchema) {
+        const text = source.includes('MALFORMED') ? 'invalid JSON' : JSON.stringify({ diagnostics:[...(source.includes('BAD_LINES') ? [] : [{ index:0,displayLine:source.includes('UNLOCATED') ? 0 : 1,explanation:source.includes('LONG_MESSAGE') ? '説明'.repeat(400)+'全文の末尾' : 'Intが必要ですが文字列になっています。数値に直してください。' }]),{ index:999,displayLine:1,explanation:'invalid index' },{ index:1,displayLine:1,explanation:'warning is not an error' },...[-1,1.5,999,'2',null,undefined].map(displayLine => ({ index:0,displayLine,explanation:'invalid location' }))] });
+        send({ method:'item/agentMessage/delta',params:{ threadId,delta:'This is a preamble.' } });
+        send({ method:'item/completed',params:{ threadId,item:{ type:'agentMessage',text } } });
+      } else send({ method:'item/agentMessage/delta',params:{ threadId,delta:'チャットの応答' } });
+      send({ method:'turn/completed',params:{ threadId,turn:{ status:source.includes('FAILED') ? 'failed' : 'completed',error:{ message:'test failure' } } } });
+    },30);
+  }
+  if (m.id !== undefined) send({ id:m.id,result });
+});`,{ mode:0o755 });
+  const events = [], codex = new Codex(store,e => events.push(e),script); t.after(() => codex.close());
+  const item = await store.create('Solution.hs');
+  const report = { source:'module Solution where\nx = "wrong"',diagnostics:[{ line:2,column:1,severity:'error',message:'type mismatch' },{ line:1,column:1,severity:'warning',message:'warning' }] };
+  const [explanations] = await Promise.all([codex.explainDiagnostics(report),codex.ask(item.id,'ヒント','','','')]);
+  await waitFor(() => !store.find(item.id).messages.at(-1).pending);
+  assert.equal(explanations.size,1);
+  assert.match(explanations.get(0).explanation,/Int/);
+  assert.equal(explanations.get(0).displayLine,1,'AI can choose a different line from GHCi line 2');
+  assert.equal(item.messages.length,2);
+  assert.equal(item.messages.at(-1).text,'チャットの応答');
+  assert.ok(events.filter(e => e.type === 'ai-message').every(e => !e.message.text.includes('Int')));
+  assert.equal(codex.active.size,0);
+  await assert.rejects(codex.explainDiagnostics({ ...report,source:'MALFORMED' }),/JSON/);
+  await assert.rejects(codex.explainDiagnostics({ ...report,source:'FAILED' }),/test failure/);
+  await assert.rejects(codex.explainDiagnostics({ ...report,source:'BAD_LINES' }),/説明を取得できません/);
+  const unlocated = await codex.explainDiagnostics({ ...report,source:'UNLOCATED' });
+  assert.equal(unlocated.get(0).displayLine,0,'unlocated explanations stay out of source lines');
+  const longMessage = await codex.explainDiagnostics({ ...report,source:'LONG_MESSAGE' });
+  assert.equal(longMessage.get(0).explanation,'説明'.repeat(400)+'全文の末尾','AI messages are not truncated at 500 characters');
+  const requests = (await fs.readFile(path.join(root,'requests.log'),'utf8')).trim().split('\n').map(JSON.parse);
+  const background = requests.find(r => r.method === 'turn/start' && r.params.outputSchema);
+  assert.deepEqual(background.params.outputSchema.required,['diagnostics']);
+  assert.deepEqual(background.params.outputSchema.properties.diagnostics.items.required,['index','displayLine','explanation']);
+  const input = JSON.parse(background.params.input[0].text);
+  assert.deepEqual(input.source,[{ line:1,text:'module Solution where' },{ line:2,text:'x = "wrong"' }]);
+  const thread = requests.find(r => r.method === 'thread/start' && r.params.developerInstructions.includes('GHCi load errors'));
+  assert.equal(thread.params.sandbox,'read-only'); assert.equal(thread.params.ephemeral,true);
+  assert.equal(thread.params.config.web_search,'disabled');
+  assert.ok(requests.some(r => r.method === 'thread/archive'));
+  await assert.rejects(codex.explainDiagnostics({ ...report,source:'DISCONNECT' }),/接続が終了/);
+  assert.equal(item.messages.length,2,'background failures also leave chat history untouched');
 });

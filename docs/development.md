@@ -29,7 +29,12 @@ npm run test:electron   # GUIを起動できる環境でElectronの操作テス�
 Electron画面でAIサイドバーの開閉・幅調整と復元、GHCiの入力保持、エラー添付、一行入力からの送信、モデルと推論レベルの選択・復元をテスト用app-serverで確認しています。実Codex app-serverでもモデル一覧取得とWeb検索によるHaskell公式サイトの取得を確認済みです。ネイティブのフォルダー選択ダイアログは未確認です。
 
 実装参照: [公式Codex app-serverドキュメント](https://developers.openai.com/codex/app-server)。
+GHCiのエラー解析はチャットとは別の一時スレッドを使い、`turn/start.outputSchema` で `{ diagnostics: [{ index, displayLine, explanation }] }` を要求します。`index`はGHCiの診断一覧の添字、`displayLine`はAIが原因と修正箇所を判断した現在のソースの行番号（1始まり）です。行番号付きのソースとGHCi出力を渡し、GHCiの報告行と異なる行への表示にも対応します。表示先が特定できない場合は0とし、ポップアップに表示します。診断番号・行番号の整数性と範囲を検証し、元のGHCiの行・列は別に保持します。解析スレッドは読み取り専用・ツール使用禁止の指示・Web検索無効で、完了または失敗後に解放します。GHCiの読み込み完了は60秒、AIのターン完了は120秒でタイムアウトします。
+
+通常のテストでは実GHCiによる明示的起動・同一プロセスでの再読み込み・型エラー・実行時例外・古いスナップショット拒否を確認し、テスト用app-serverでJSON形式・会話との分離・不正出力・接続切断を検証します。Electron操作テストではファイル選択だけでは未起動のままであること・実際のショートカットによる読込・該当行への説明表示・チャット履歴の不変・編集中の説明保持・保存時と再読み込み時の消去・保存後の古いAI結果の非表示も確認します。
 Web検索設定: [公式Codex設定リファレンス](https://developers.openai.com/codex/config-reference)。
 
 端末実装: [xterm.js API](https://xtermjs.org/docs/api/terminal/classes/terminal/)、[node-pty](https://github.com/microsoft/node-pty)。
 エディタ配色の参考: [Catppuccin](https://github.com/catppuccin/catppuccin)、[Rosé Pine](https://rosepinetheme.com/palette/)、[Solarized](https://ethanschoonover.com/solarized/)。各ライトパレットをCodeMirror向けに調整しています。
+
+GHCiは起動時の一時スクリプトでプロンプトに不可視のOSCマーカーを設定します。PTYの出力が分割されてもプロンプト到達を検出し、その読み込み操作の出力だけを解析します。一時スクリプトはGHCi終了時に削除します。

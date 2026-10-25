@@ -8,7 +8,7 @@ import { FontSettings } from './FontSettings';
 import { fontSettingsKey, loadFontSettings } from './fonts';
 import { editorThemeKey, loadEditorTheme } from './editorThemes';
 import { usePaneNavigation } from './usePaneNavigation';
-import type { AppEvent, CodexStatus, Message, Problem, Diagnostic, Summary, WorkspaceInfo } from './types';
+import type { AppEvent, CodexStatus, Message, Problem, Diagnostic, Summary, WorkspaceInfo, GhciReport } from './types';
 
 const api = window.kata;
 const time = (date:string) => new Date(date).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
@@ -16,6 +16,8 @@ const fileDate = (value:string) => new Date(value).toLocaleDateString('ja-JP', {
 function Logo({ small = false }:{ small?:boolean }) { return <span className={`haskell-logo ${small?'small':''}`}>λ<span>=</span></span>; }
 
 type SidebarWidths = { left:number; right:number };
+type GhciLoadState = { source:string; phase:'loading'|'analyzing'|'done'|'error'; report?:GhciReport; note?:string };
+const noInlineDiagnostics:GhciReport['diagnostics'] = [];
 function initialSidebarWidths():SidebarWidths {
   const fallback = { left:window.innerWidth >= 1500 ? 254 : window.innerWidth <= 1200 ? 216 : 244,right:window.innerWidth >= 1500 ? 380 : 330 };
   try {
@@ -65,6 +67,9 @@ export function App() {
   const [fontSettingsOpen,setFontSettingsOpen] = useState(false);
   const [mode,setMode] = useState('NORMAL'); const [cursor,setCursor] = useState([1,1]);
   const [diagnostics,setDiagnostics] = useState<Record<string,Diagnostic>>({}); const [busy,setBusy] = useState<Record<string,boolean>>({});
+  const [loads,setLoads] = useState<Record<string,GhciLoadState>>({});
+  const loadVersions = useRef<Record<string,number>>({});
+  const loadingGhci = useRef(new Set<string>());
   const [dead,setDead] = useState<Record<string,boolean>>({}); const [generation,setGeneration] = useState<Record<string,number>>({});
   const [question,setQuestion] = useState('');
   const [aiSettings,setAISettings] = useState(initialAISettings);
@@ -83,6 +88,13 @@ export function App() {
   const id = problem?.id || '';
   const messages = chatMap[id] || problem?.messages || []; const aiBusy = messages.some(x => x.pending);
   const lastError = diagnostics[id];
+  const loadState = loads[id];
+  const [dismissedLoadStatus,setDismissedLoadStatus] = useState<GhciLoadState|null>(null);
+  useEffect(() => {
+    if (!loadState || !['done','error'].includes(loadState.phase)) return;
+    const timer = setTimeout(() => setDismissedLoadStatus(loadState),6500);
+    return () => clearTimeout(timer);
+  },[loadState]);
   const notify = useCallback((error:unknown) => setToast(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /,'') : String(error)), []);
   const connectCodex = useCallback(async () => {
     const epoch = folderEpoch.current;
@@ -137,36 +149,42 @@ export function App() {
       problemRef.current = latest; codeRef.current = latest.code; setProblem(latest); setCode(latest.code);
     }
   }, []);
-  const save = useCallback(async () => {
-    const p = problemRef.current; if (!p || !dirtyRef.current) return;
+  const clearLoadMessages = useCallback((target:string) => {
+    loadVersions.current[target] = (loadVersions.current[target] || 0)+1;
+    setLoads(prev => { const next = { ...prev }; delete next[target]; return next; });
+  },[]);
+  const save = useCallback(async (clearMessages = true) => {
+    const p = problemRef.current; if (!p) return;
+    if (!dirtyRef.current) { if (clearMessages) clearLoadMessages(p.id); return; }
     const text = codeRef.current; setSaving(true);
     try {
       await api.save(p.id, text);
+      if (clearMessages) clearLoadMessages(p.id);
       if (problemRef.current?.id === p.id && codeRef.current === text) { dirtyRef.current = false; setDirty(false); }
       await refresh();
     } finally { setSaving(false); }
-  }, [refresh]);
+  }, [refresh,clearLoadMessages]);
   const activate = useCallback(async (p:Problem) => {
     problemRef.current = p; codeRef.current = p.code; dirtyRef.current = false;
     setProblem(p); setCode(p.code); setDirty(false);
     setQuestion(''); setChatMap(prev => ({ ...prev, [p.id]:p.messages }));
     localStorage.setItem('kata-last',p.id);
-    setDead(prev => ({ ...prev,[p.id]:false }));
   }, []);
+  const confirmDiscard = useCallback(() => !dirtyRef.current || window.confirm('未保存の変更があります。保存せずに続けますか？\n保存する場合はキャンセルして、⌘S / Ctrl+S を押してください。'),[]);
   const open = useCallback(async (next:string) => {
-    if (switching.current || next === problemRef.current?.id) return;
+    if (switching.current || next === problemRef.current?.id || !confirmDiscard()) return;
     switching.current = true;
-    try { while (dirtyRef.current) await save(); await activate(await api.open(next)); }
+    try { await activate(await api.open(next)); }
     catch (e) { notify(e); } finally { switching.current = false; }
-  }, [activate,save,notify]);
+  }, [activate,confirmDiscard,notify]);
   useEffect(() => {
     if (!api) { setLoading(false); return; }
     const unsub = api.onEvent((event:AppEvent) => {
       if (event.type === 'before-close') {
-        (async () => { if (dirtyRef.current && problemRef.current) await api.save(problemRef.current.id,codeRef.current); await api.closeReady(); })().catch(notify);
+        if (confirmDiscard()) api.closeReady().catch(notify);
       }
       if (event.type === 'workspace-changed') refresh().catch(notify);
-      if (event.type === 'ghci-diagnostic') setDiagnostics(prev => ({ ...prev,[event.id]:event.diagnostic }));
+      if (event.type === 'ghci-diagnostic') { setDiagnostics(prev => ({ ...prev,[event.id]:event.diagnostic })); analyzeDiagnosticRef.current(event.id); }
       if (event.type === 'ghci-exit') setDead(prev => ({ ...prev, [event.id]:true }));
       if (event.type === 'notice') notify(event.message);
       if (event.type === 'codex-status') setCodexStatus(event.status);
@@ -187,12 +205,7 @@ export function App() {
       } catch (e) { if (!disposed) notify(e); } finally { if (!disposed) setLoading(false); }
     })();
     return () => { disposed = true; unsub(); };
-  }, [activate,notify,refresh]);
-  useEffect(() => {
-    if (!dirty) return;
-    const timer = setTimeout(() => { save().catch(notify); }, 700);
-    return () => clearTimeout(timer);
-  }, [code,dirty,save,notify]);
+  }, [activate,notify,refresh,confirmDiscard]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''),6500); return () => clearTimeout(t); }, [toast]);
   useEffect(() => {
     if (chatArea.current) chatArea.current.scrollTop = chatArea.current.scrollHeight;
@@ -207,16 +220,61 @@ export function App() {
     setRight(false);
     requestAnimationFrame(() => terminalRef.current?.focus());
   },[]);
-  const run = useCallback(async () => {
-    const p = problemRef.current; if (!p || busy[p.id]) return;
+  const analyzeDiagnosticRef = useRef<(target:string)=>void>(() => {});
+  const run = useCallback(async (restartSession = false, diagnosticId?:string) => {
+    const p = diagnosticId ? items.find(item => item.id === diagnosticId) : problemRef.current;
+    if (!p || loadingGhci.current.has(p.id)) return;
+    const epoch = folderEpoch.current;
+    const source = p.id === problemRef.current?.id ? codeRef.current : '';
+    const version = (loadVersions.current[p.id] || 0)+1;
+    loadVersions.current[p.id] = version;
+    loadingGhci.current.add(p.id);
+    const update = (state:GhciLoadState) => {
+      if (epoch === folderEpoch.current && loadVersions.current[p.id] === version) setLoads(prev => ({ ...prev,[p.id]:state }));
+    };
+    update({ source,phase:diagnosticId ? 'analyzing' : 'loading' });
     setBusy(prev => ({ ...prev,[p.id]:true }));
+    let report:GhciReport|undefined;
     try {
-      await save();
-      if (dead[p.id]) { await api.ghciRestart(p.id); setGeneration(prev => ({ ...prev,[p.id]:(prev[p.id] || 0)+1 })); }
-      else await api.ghciReload(p.id);
-      setDead(prev => ({ ...prev,[p.id]:false })); focusGhci();
-    } catch (e) { notify(e); } finally { setBusy(prev => ({ ...prev,[p.id]:false })); }
-  }, [busy,dead,save,notify,focusGhci]);
+      if (diagnosticId) report = await api.ghciDiagnosticReport(p.id);
+      else {
+        await save(false);
+        if (epoch !== folderEpoch.current || problemRef.current?.id !== p.id || codeRef.current !== source) {
+          update({ source,phase:'error',note:'コードが変更されました。もう一度読み込んでください。' }); return;
+        }
+        if (restartSession) {
+          await api.ghciStop(p.id);
+          setGeneration(prev => ({ ...prev,[p.id]:(prev[p.id] || 0)+1 }));
+        }
+        const size = terminalRef.current?.dimensions();
+        report = await api.ghciLoad(p.id,size?.cols,size?.rows);
+      }
+      if (epoch !== folderEpoch.current) return;
+      const errors = report.diagnostics.some(d => d.severity === 'error');
+      if (report.success) setDiagnostics(prev => { const next = { ...prev }; delete next[p.id]; return next; });
+      update({ source:report.source,phase:errors ? 'analyzing' : 'done',report });
+      if (errors) {
+        report = await api.ghciExplain(p.id,report.token,model,effort);
+        update({ source:report.source,phase:'done',report });
+      }
+    } catch (error) {
+      update({ source:report?.source ?? source,phase:'error',report,note:`${report ? 'AI解析に失敗しました。GHCiのエラーを表示しています。' : ''}${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      loadingGhci.current.delete(p.id);
+      if (epoch === folderEpoch.current) setBusy(prev => ({ ...prev,[p.id]:false }));
+    }
+  },[save,model,effort,items]);
+  analyzeDiagnosticRef.current = target => { void run(false,target); };
+  useEffect(() => {
+    const loadKey = (event:KeyboardEvent) => {
+      if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.altKey || event.isComposing || document.querySelector('dialog[open],.modal-backdrop')) return;
+      // Handle this before Vim and xterm consume Enter or turn it into input.
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (!event.repeat) void run();
+    };
+    window.addEventListener('keydown',loadKey,true);
+    return () => window.removeEventListener('keydown',loadKey,true);
+  },[run]);
   useEffect(() => {
     const close = (event:KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || !right || document.querySelector('dialog[open],.modal-backdrop')) return;
@@ -231,54 +289,34 @@ export function App() {
       if (e.defaultPrevented || !(e.metaKey || e.ctrlKey)) return;
       if ((e.target as HTMLElement).closest('.ghci-terminal') && !e.metaKey && !e.shiftKey) return;
       if (e.key === 's') { e.preventDefault(); save().catch(notify); }
-      if (e.key === 'Enter') { e.preventDefault(); void run(); }
       if (e.key === 'n') { e.preventDefault(); setNewOpen(true); }
       if (e.key.toLowerCase() === 'j' && (e.metaKey || e.shiftKey)) { e.preventDefault(); focusGhci(); }
       if (e.key === '/') { e.preventDefault(); setHelp(prev => !prev); }
     };
     window.addEventListener('keydown',handler); return () => window.removeEventListener('keydown',handler);
   }, [save,run,notify,focusGhci]);
-  useEffect(() => {
-    const flush = () => { if (dirtyRef.current && problemRef.current) void api.save(problemRef.current.id,codeRef.current); };
-    window.addEventListener('blur',flush); window.addEventListener('beforeunload',flush);
-    return () => { window.removeEventListener('blur',flush); window.removeEventListener('beforeunload',flush); };
-  }, []);
   async function create() {
-    if (switching.current) return; switching.current = true;
-    try { while (dirtyRef.current) await save(); const p = await api.create(newTitle.trim() || 'Untitled.hs'); setNewOpen(false); setNewTitle(''); await refresh(); await activate(p); }
+    if (switching.current || !confirmDiscard()) return; switching.current = true;
+    try { const p = await api.create(newTitle.trim() || 'Untitled.hs'); setNewOpen(false); setNewTitle(''); await refresh(); await activate(p); }
     catch (e) { notify(e); } finally { switching.current = false; }
   }
   async function sendQuestion(text = question, context = '') {
     if (!text.trim() || !id || aiBusy || sendingQuestions.current.has(id)) return;
     const target = id; sendingQuestions.current.add(target); setQuestion('');
-    try { await save(); await api.ask(target,text,context,model,effort); }
+    try { await api.ask(target,text,context,model,effort,codeRef.current); }
     catch (e) { notify(e); }
     finally { sendingQuestions.current.delete(target); }
   }
-  function askError(error:Diagnostic) {
-    if (!error.output.trim()) { notify('送信するエラー出力がありません。'); return; }
-    setRight(true);
-    void sendQuestion('このGHCiのエラーの原因と、修正のヒントを教えてください。',error.output);
-    setTimeout(() => questionInput.current?.focus(),0);
-  }
-  usePaneNavigation(() => { if (lastError && !aiBusy) askError(lastError); },ghciSide,pane => {
+  usePaneNavigation(() => { if (lastError) void run(false,id); },ghciSide,pane => {
     setRight(pane === 'assistant');
   });
-  async function restart() {
-    if (!id || busy[id]) return; setBusy(prev => ({ ...prev,[id]:true }));
-    try {
-      await save(); await api.ghciRestart(id); setDead(prev => ({ ...prev,[id]:false }));
-      setGeneration(prev => ({ ...prev,[id]:(prev[id] || 0)+1 }));
-      setDiagnostics(prev => { const next={ ...prev }; delete next[id]; return next; });
-    } catch (e) { notify(e); } finally { setBusy(prev => ({ ...prev,[id]:false })); }
-  }
   async function chooseFolder() {
-    if (switching.current) return;
+    if (switching.current || !confirmDiscard()) return;
     switching.current = true; setChoosingFolder(true);
     try {
-      while (dirtyRef.current) await save();
       const info = await api.chooseFolder(); if (!info) return;
       folderEpoch.current++;
+      setLoads({});
       problemRef.current = null; codeRef.current = ''; dirtyRef.current = false;
       setProblem(null); setCode(''); setDirty(false); setFolder(info); setQuery('');
       setDiagnostics({}); setBusy({}); setDead({}); setGeneration({}); setChatMap({}); setQuestion('');
@@ -314,14 +352,14 @@ export function App() {
       <main className="main-workspace">
         {problem ? <>
         <div ref={split} className={`split-workspace ${ghciSide ? 'ghci-at-side' : ''}`}>
-          <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
-          <Editor id={id} code={code} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
+          <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button className="load-button" aria-label="GHCiで読込" title="保存してGHCiで読込・エラーをAI解析 (⌘Enter)" disabled={loadingGhci.current.has(id)} onClick={() => void run()}>{loadingGhci.current.has(id) ? <Loader2 size={12} className="spin"/> : <CheckCheck size={12}/>}<span>GHCi読込</span><kbd>⌘ ↵</kbd></button><span className="tool-divider"/><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
+          <Editor id={id} code={code} diagnostics={loadState?.report?.diagnostics || noInlineDiagnostics} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
           </section>
           {!ghciSide && <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>}
           {ghciSide && <SidebarResizer side="right" controls="ghci-panel" label="GHCiの幅を調整" width={ghciWidth} min={220} max={ghciMax} onResize={setPreferredGhciWidth}/>}
           <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading" style={ghciSide ? { width:ghciWidth,flex:'0 0 auto' } : undefined}>
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
-              <div className="ghci-tools"><button className="icon-button" aria-label={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} title={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} onClick={() => setGhciSide(!ghciSide)}>{ghciSide ? <PanelBottom size={14}/> : <PanelRight size={14}/>}</button>{lastError && <button className="ask-error-button" aria-label="エラーをAIに相談" title="エラー内容をAIに送信 (Ctrl-J → e)" disabled={aiBusy} onClick={() => askError(lastError)}><Sparkles size={12}/><span>エラーをAIに相談</span></button>}<button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
+              <div className="ghci-tools"><button className="icon-button" aria-label={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} title={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} onClick={() => setGhciSide(!ghciSide)}>{ghciSide ? <PanelBottom size={14}/> : <PanelRight size={14}/>}</button>{lastError && <button className="ask-error-button" aria-label="GHCiのエラーを解析" title="GHCiのエラーを裏でAI解析 (Ctrl-J → e)" disabled={busy[id]} onClick={() => void run(false,id)}><Sparkles size={12}/><span>エラーを解析</span></button>}<button className="run-button" title="GHCiを起動して読込／再読込・エラーをAI解析 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>{dead[id] === false ? '再読込' : '読込'}</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void run(true)}><RotateCcw size={13}/></button></div>
             </div>
             <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
           </section>
@@ -359,9 +397,17 @@ export function App() {
       <div><span className="connection-dot"/><span>Local workspace</span>{problem && <><span className="footer-divider"/><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span></>}</div>
       <div>{problem && <><span>Ln {cursor[0]}, Col {cursor[1]}</span><span>UTF-8</span><Logo small/><span>Haskell</span><span className="footer-divider"/></>}{saving?<><Loader2 size={11} className="spin"/>保存中</>:dirty?<><Circle size={7}/>未保存</>:<><CheckCheck size={12}/>すべて保存済み</>}</div>
     </footer>
+    {loadState && loadState !== dismissedLoadStatus && !(loadState.phase === 'done' && loadState.report?.success) && <div className="ghci-status-popup" role="status" aria-live="polite" aria-atomic="true" aria-label="GHCiの処理状況">
+      {loadState.phase === 'loading' || loadState.phase === 'analyzing' ? <Loader2 size={16} className="spin"/> : <Sparkles size={16}/>}
+      <div className="ghci-status-message">
+      <span>{loadState.phase === 'loading' ? 'GHCiで読み込み中…' : loadState.phase === 'analyzing' ? 'GHCiのエラーをAIが解析中…' : loadState.note || `GHCiでエラー${loadState.report?.diagnostics.some(d => d.severity === 'error') ? ` · ${loadState.report.diagnostics.filter(d => d.severity === 'error').length}件のエラー` : ' · GHCiの出力を確認してください'}`}{loadState.phase === 'done' && loadState.report?.diagnostics.some(d => (d.displayLine ?? d.line) > 0 && d.explanation) && ' · AIの説明を該当行に表示しています'}</span>
+      {loadState.report?.diagnostics.filter(d => (d.displayLine ?? d.line) === 0 && d.explanation).map((d,index) => <p key={index}>{d.explanation}</p>)}
+      </div>
+      <button className="icon-button" aria-label="GHCiの通知を閉じる" onClick={() => setDismissedLoadStatus(loadState)}><X size={14}/></button>
+    </div>}
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
     {fontSettingsOpen && <FontSettings settings={fontSettings} theme={editorTheme} onThemeChange={setEditorTheme} onChange={setFontSettings} onClose={() => setFontSettingsOpen(false)}/>}
     {newOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setNewOpen(false); }}><form className="modal new-modal" onSubmit={e => { e.preventDefault(); void create(); }}><button type="button" className="modal-close icon-button" aria-label="閉じる" onClick={() => setNewOpen(false)}><X size={17}/></button><Logo/><span className="eyebrow">NEW HASKELL FILE</span><h2>新しいファイル</h2><p>選択中のフォルダーに .hs ファイルを作成します。</p><label>ファイル名<input autoFocus placeholder="例：SumOfOddNumbers.hs" value={newTitle} onChange={e => setNewTitle(e.target.value)} maxLength={160}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewOpen(false)}>キャンセル</button><button className="primary-button" type="submit"><Plus size={14}/>ファイルを作成</button></div></form></div>}
-    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['領域移動（左 / 下 / 上 / 右）','Ctrl J → h / j / k / l'],['エラーをAIに相談','Ctrl J → e'],['GHCiにフォーカス','⌘ J / Ctrl Shift J'],['ファイル内の単語で補完','Ctrl Space / Tab / Enter'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。領域移動は全OS共通です。</p></div></div>}
+    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['GHCiで読込／再読込・エラーをAI解析','⌘ Enter / ⌘ ⇧ Enter'],['領域移動（左 / 下 / 上 / 右）','Ctrl J → h / j / k / l'],['GHCiのエラーを裏でAI解析','Ctrl J → e'],['GHCiにフォーカス','⌘ J / Ctrl Shift J'],['ファイル内の単語で補完','Ctrl Space / Tab / Enter'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。領域移動は全OS共通です。</p></div></div>}
   </div>;
 }

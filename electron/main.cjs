@@ -5,6 +5,7 @@ const os = require('node:os');
 const { Workspace } = require('./workspace.cjs');
 const { Ghci } = require('./ghci.cjs');
 const { Codex } = require('./codex.cjs');
+const { GhciDiagnostics } = require('./ghci-diagnostics.cjs');
 const { restoreWindowState, trackWindowState } = require('./window-state.cjs');
 const root = path.resolve(__dirname, '..');
 if (!app.isPackaged) {
@@ -13,7 +14,7 @@ if (!app.isPackaged) {
 }
 // Finder-launched macOS apps do not inherit the interactive shell PATH.
 process.env.PATH = [...new Set([path.join(os.homedir(), '.ghcup/bin'), path.join(os.homedir(), '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', ...(process.env.PATH || '').split(path.delimiter)])].join(path.delimiter);
-let win, store, workspace, watcher, watchTimer, ghci, codex, closeAllowed = false, rendererReady = false;
+let win, store, workspace, watcher, watchTimer, ghci, codex, ghciDiagnostics, closeAllowed = false, rendererReady = false;
 const emit = event => { if (win && !win.isDestroyed()) win.webContents.send('kata:event', event); };
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light';
@@ -35,6 +36,7 @@ app.whenReady().then(async () => {
     } catch (error) { emit({ type:'notice', message:error.message }); }
   }
   ghci = new Ghci(emit, process.env.KATA_GHCI || 'ghci'); codex = makeCodex(); watchFolder();
+  ghciDiagnostics = new GhciDiagnostics(store,ghci);
   const handlers = {
     'problems:list': () => store.list(),
     'problems:create': (_, title) => store.create(title),
@@ -47,20 +49,22 @@ app.whenReady().then(async () => {
       const previous = store.root;
       const info = await workspace.setFolder(result.filePaths[0]);
       if (info.path === previous) return null;
-      ghci.close(); codex.close(); store = workspace.store;
-      ghci = new Ghci(emit,process.env.KATA_GHCI || 'ghci'); codex = makeCodex(); watchFolder();
+      ghci.close(); codex.close(); ghciDiagnostics.close(); store = workspace.store;
+      ghci = new Ghci(emit,process.env.KATA_GHCI || 'ghci'); ghciDiagnostics = new GhciDiagnostics(store,ghci); codex = makeCodex(); watchFolder();
       return info;
     },
     'problems:reveal': (_, id) => shell.showItemInFolder(store.file(id)),
-    'ghci:start': (_, id, cols=80, rows=24) => { dimensions(cols,rows); return ghci.start(id,store.file(id),cols,rows); },
     'ghci:write': (_, id, data) => { store.find(id); if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('端末入力が大きすぎます'); ghci.write(id,data); },
     'ghci:resize': (_, id, cols, rows) => { store.find(id); dimensions(cols,rows); ghci.resize(id,cols,rows); },
-    'ghci:reload': (_, id) => { store.find(id); return ghci.reload(id); },
-    'ghci:restart': (_, id) => ghci.restart(id,store.file(id)),
+    'ghci:stop': (_, id) => { store.find(id); return ghci.stop(id); },
     'codex:connect': () => codex.connect(),
     'codex:status': () => codex.status,
-    'codex:ask': (_, id, text, context, model, effort) => codex.ask(id, text, context, model, effort),
+    'codex:ask': (_, id, text, context, model, effort, source) => codex.ask(id, text, context, model, effort, source),
     'codex:interrupt': (_, id) => codex.interrupt(id),
+    'ghci:snapshot': (_, id) => { store.find(id); return ghci.peek(id); },
+    'ghci:load': (_, id, cols=80, rows=24) => { dimensions(cols,rows); return ghciDiagnostics.load(id,cols,rows); },
+    'ghci:diagnostic-report': (_, id) => ghciDiagnostics.latest(id),
+    'ghci:explain': (_, id, token, model, effort) => ghciDiagnostics.explain(id,token,codex,model,effort),
     'app:close-ready': async () => { await store.writes; closeAllowed = true; win.close(); }
   };
   function dimensions(cols,rows) { if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols<2 || cols>1000 || rows<1 || rows>500) throw new Error('端末サイズが不正です'); }
@@ -86,7 +90,7 @@ app.whenReady().then(async () => {
       emit({ type:'before-close' });
     });
     if (process.env.KATA_DEV_URL) win.loadURL(process.env.KATA_DEV_URL); else win.loadFile(path.join(root,'dist/index.html'));
-    win.on('closed', () => { watcher?.close(); clearTimeout(watchTimer); ghci.close(); codex.close(); win = null; });
+    win.on('closed', () => { watcher?.close(); clearTimeout(watchTimer); ghci.close(); codex.close(); ghciDiagnostics.close(); win = null; });
   }
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label:'Kata', submenu:[{ role:'about' }, { type:'separator' }, { role:'hide' }, { role:'quit' }] },

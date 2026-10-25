@@ -3,6 +3,8 @@ export type Problem = { id:string; title:string; fileName:string; createdAt:stri
 export type Summary = Omit<Problem, 'code'|'messages'> & { messageCount:number };
 export type WorkspaceInfo = { path:string; name:string; warning:string|null };
 export type Diagnostic = { output:string; at:string };
+export type InlineDiagnostic = { line:number; column:number; severity:'error'|'warning'; message:string; displayLine?:number; explanation?:string };
+export type GhciReport = { token:string; source:string; success:boolean; output:string; diagnostics:InlineDiagnostic[] };
 export type TerminalSnapshot = { data:string; seq:number; cols:number; rows:number; alive:boolean };
 export type CodexModel = { id:string; name:string; isDefault:boolean; defaultReasoningEffort:string; supportedReasoningEfforts:{ effort:string; description:string }[] };
 export type CodexStatus = { state:'disconnected'|'connecting'|'connected'|'error'; message:string; authenticated?:boolean; defaultModel?:string; defaultReasoningEffort?:string; models:CodexModel[] };
@@ -11,11 +13,13 @@ export interface Bridge {
   list():Promise<Summary[]>; create(title:string):Promise<Problem>; open(id:string):Promise<Problem>;
   save(id:string, code:string):Promise<{ savedAt:string }>;
   workspaceInfo():Promise<WorkspaceInfo>; chooseFolder():Promise<WorkspaceInfo|null>;
-  ghciStart(id:string, cols?:number, rows?:number):Promise<TerminalSnapshot>;
   ghciWrite(id:string, data:string):Promise<void>; ghciResize(id:string, cols:number, rows:number):Promise<void>;
-  ghciReload(id:string):Promise<void>; ghciRestart(id:string):Promise<TerminalSnapshot>;
+  ghciStop(id:string):Promise<void>;
   codexConnect():Promise<CodexStatus>; codexStatus():Promise<CodexStatus>;
-  ask(id:string, text:string, context:string, model:string, effort?:string):Promise<unknown>; stopAI(id:string):Promise<void>;
+  ask(id:string, text:string, context:string, model:string, effort?:string, source?:string):Promise<unknown>; stopAI(id:string):Promise<void>;
+  ghciSnapshot(id:string):Promise<TerminalSnapshot|null>;
+  ghciLoad(id:string, cols?:number, rows?:number):Promise<GhciReport>;
+  ghciDiagnosticReport(id:string):Promise<GhciReport>; ghciExplain(id:string, token:string, model:string, effort:string):Promise<GhciReport>;
   reveal(id:string):Promise<void>; closeReady():Promise<void>; onEvent(callback:(e:AppEvent)=>void):()=>void;
 }
 declare global { interface Window { kata:Bridge } }
