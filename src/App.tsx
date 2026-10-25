@@ -277,7 +277,6 @@ export function App() {
   const filtered = items.filter(x => x.fileName.toLowerCase().includes(query.toLowerCase()));
   if (!api) return <div className="browser-notice"><Logo/><h1>Kata</h1><p>このアプリはElectronで起動してください。</p><code>npm run dev</code></div>;
   return <div className="app">
-    <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="エディタ設定（フォント・配色）" aria-label="エディタ設定" className="icon-button" onClick={() => setFontSettingsOpen(true)}><Type size={16}/></button></div></header>
     <div className="layout" ref={layoutRef}>
       <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:sidebarWidths.left }}>
         <div className="sidebar-heading"><span hidden={!left}>FILES</span><button className="icon-button" title={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-label={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-expanded={left} aria-controls="file-sidebar-content" onClick={() => setLeft(!left)}>{left ? <PanelLeftClose size={15}/> : <PanelLeftOpen size={15}/>}</button></div>
@@ -286,8 +285,8 @@ export function App() {
         <button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/><span>新しいファイル</span><kbd>⌘ N</kbd></button>
         <label className="search-box"><Search size={14}/><input aria-label="ファイルを検索" placeholder="ファイルを検索…" value={query} onChange={e => setQuery(e.target.value)}/>{query && <button className="icon-button" aria-label="検索をクリア" onClick={() => setQuery('')}><X size={12}/></button>}</label>
         <div className="problem-list">{filtered.map(item => <button key={item.id} title={item.fileName} data-problem-id={item.id} aria-current={item.id===id?'page':undefined} onClick={() => void open(item.id)} className={`problem-item ${item.id===id?'selected':''}`}><span className="file-name">{item.fileName}</span><time className="file-date" dateTime={item.updatedAt} title="更新日">{fileDate(item.updatedAt)}</time></button>)}{!filtered.length && <div className="list-empty">ファイルが見つかりません</div>}</div>
-        <div className="sidebar-bottom"><button className="sidebar-help" onClick={() => setHelp(true)}><Command size={14}/><span>キーボードショートカット</span><kbd>⌘ /</kbd></button></div>
         </div>
+        <div className="sidebar-bottom"><button title="エディタ設定（フォント・配色）" aria-label="エディタ設定" className="sidebar-settings" onClick={() => setFontSettingsOpen(true)}><Type size={16}/><span hidden={!left}>フォント・配色設定</span></button></div>
       </aside>
       {left && <SidebarResizer side="left" controls="file-sidebar" width={sidebarWidths.left} min={180} max={leftMax} onResize={width => setPreferredWidths(prev => ({ left:width,right:right ? sidebarWidths.right : prev.right }))}/>}
       <main className="main-workspace">
@@ -295,7 +294,7 @@ export function App() {
         <div ref={split} className="split-workspace">
           <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
           <Editor id={id} code={code} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
-          <div className="editor-status"><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span><div className="editor-status-right"><span>Ln {cursor[0]}, Col {cursor[1]}</span><span>UTF-8</span><span>Haskell</span></div></div></section>
+          </section>
           <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
           <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading">
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
@@ -329,7 +328,10 @@ export function App() {
         </div>
       </aside>
     </div>
-    <footer className="app-status"><div><span className="connection-dot"/><span>Local workspace</span><span className="footer-divider"/><Logo small/><span>Haskell</span></div><div>{saving?<><Loader2 size={11} className="spin"/>保存中</>:dirty?<><Circle size={7}/>未保存</>:<><CheckCheck size={12}/>すべて保存済み</>}<span className="footer-divider"/><button onClick={() => setHelp(true)}><Command size={11}/><span>ショートカット</span></button></div></footer>
+    <footer className="app-status">
+      <div><span className="connection-dot"/><span>Local workspace</span>{problem && <><span className="footer-divider"/><span className={`mode-indicator ${mode.toLowerCase()}`}>{mode}</span><span>{vimEnabled?'Vim keybindings':'Standard keybindings'}</span></>}</div>
+      <div>{problem && <><span>Ln {cursor[0]}, Col {cursor[1]}</span><span>UTF-8</span><Logo small/><span>Haskell</span><span className="footer-divider"/></>}{saving?<><Loader2 size={11} className="spin"/>保存中</>:dirty?<><Circle size={7}/>未保存</>:<><CheckCheck size={12}/>すべて保存済み</>}</div>
+    </footer>
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
     {fontSettingsOpen && <FontSettings settings={fontSettings} theme={editorTheme} onThemeChange={setEditorTheme} onChange={setFontSettings} onClose={() => setFontSettingsOpen(false)}/>}
     {newOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setNewOpen(false); }}><form className="modal new-modal" onSubmit={e => { e.preventDefault(); void create(); }}><button type="button" className="modal-close icon-button" aria-label="閉じる" onClick={() => setNewOpen(false)}><X size={17}/></button><Logo/><span className="eyebrow">NEW HASKELL FILE</span><h2>新しいファイル</h2><p>選択中のフォルダーに .hs ファイルを作成します。</p><label>ファイル名<input autoFocus placeholder="例：SumOfOddNumbers.hs" value={newTitle} onChange={e => setNewTitle(e.target.value)} maxLength={160}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewOpen(false)}>キャンセル</button><button className="primary-button" type="submit"><Plus size={14}/>ファイルを作成</button></div></form></div>}

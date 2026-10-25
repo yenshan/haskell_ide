@@ -19,18 +19,12 @@ button svg{vertical-align:middle}
 ::-webkit-scrollbar-thumb{background:#cbd3c5;border-radius:4px}
 ::selection{background:#dbe9cf}
 .app{height:100dvh;display:flex;flex-direction:column;overflow:hidden}
-.titlebar{height:60px;flex-shrink:0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px 0 102px;background:var(--surface);-webkit-app-region:drag}
-.titlebar-brand{display:flex;align-items:center;gap:11px}
-.titlebar-brand>span:nth-child(2){font-size:19px;font-weight:650;letter-spacing:-1px;color:var(--text)}
 .haskell-logo{font-family:Georgia,serif;font-weight:700;font-size:36px;letter-spacing:-5px;color:var(--accent);display:inline-flex;align-items:center;line-height:1;white-space:nowrap}
 .haskell-logo>span{font-family:Menlo,monospace;font-size:.72em;letter-spacing:-4px;margin-left:1px;transform:translateY(1px)}
 .haskell-logo.small{font-size:21px;letter-spacing:-3px}
 .haskell-logo.small>span{letter-spacing:-3px}
-.brand-separator{color:var(--text-subtle);margin:0 4px}
-.workspace-label{font-size:11px;color:var(--text-muted);letter-spacing:.3px}
-.titlebar-right{display:flex;align-items:center;gap:9px;font-size:10px;color:var(--text-muted)}
-.local-indicator,.connection-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0}
-.titlebar-divider,.tool-divider,.footer-divider{display:inline-block;height:12px;width:1px;background:var(--border);margin:0 5px}
+.connection-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.tool-divider,.footer-divider{display:inline-block;height:12px;width:1px;background:var(--border);margin:0 5px}
 .icon-button{display:inline-flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:5px;color:var(--text-muted);flex-shrink:0;padding:0}
 .icon-button:hover{background:var(--surface-hover);color:var(--text)}
 .layout{display:flex;min-height:0;flex:1}
@@ -39,7 +33,7 @@ button svg{vertical-align:middle}
 .sidebar-content[hidden]{display:none}
 .sidebar.collapsed{padding:27px 0 0;border-right:1px solid var(--border)}
 .sidebar.collapsed .sidebar-heading{justify-content:center;padding:0}
-.sidebar-heading{height:25px;flex-shrink:0;padding:0 9px;display:flex;align-items:center;justify-content:space-between;color:var(--text-muted);font-size:10px;letter-spacing:1.6px;font-weight:600}
+.sidebar-heading{-webkit-app-region:drag;height:25px;flex-shrink:0;padding:0 9px;display:flex;align-items:center;justify-content:space-between;color:var(--text-muted);font-size:10px;letter-spacing:1.6px;font-weight:600}
 .sidebar-heading>.icon-button{position:absolute;top:6px;right:4px}
 .new-button{display:flex;align-items:center;gap:9px;background:var(--primary);color:var(--accent-hover);border:1px solid var(--accent-border);border-radius:6px;padding:10px 12px;width:100%;font-weight:550;margin:18px 0 17px;box-shadow:0 2px 5px #34462a0a}
 .new-button:hover{color:var(--accent-hover);background:var(--primary-hover)}
@@ -55,10 +49,12 @@ button svg{vertical-align:middle}
 .list-empty{padding:35px 10px;text-align:center;color:var(--text-muted);font-size:11px}
 .file-name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500;color:var(--text)}
 .file-date{font-size:10px;color:var(--text-subtle);font-variant-numeric:tabular-nums}
-.sidebar-bottom{border-top:1px solid var(--border)}
-.tiny-lambda{font-family:Georgia,serif;font-size:17px;color:var(--accent);font-weight:bold}
-.sidebar-help{display:flex;align-items:center;gap:7px;font-size:9px;color:var(--text-muted);padding:15px 3px;width:100%}
-.sidebar-help kbd{margin-left:auto;font-size:9px}
+.sidebar-bottom{flex-shrink:0;border-top:1px solid var(--border);padding:8px 0}
+.sidebar.collapsed .sidebar-bottom{margin-top:auto}
+.sidebar-settings{display:flex;align-items:center;gap:9px;width:100%;padding:9px;border-radius:5px;text-align:left;font-size:11px;color:var(--text-muted)}
+.sidebar-settings:hover{background:var(--surface-hover);color:var(--text)}
+.sidebar-settings>span[hidden]{display:none}
+.sidebar.collapsed .sidebar-settings{justify-content:center;padding:9px 0}
 .main-workspace{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface)}
 .eyebrow{font-size:9px;letter-spacing:1.7px;color:var(--text-muted);font-weight:550;display:flex;gap:8px;align-items:center}
 .split-workspace{display:flex;flex-direction:column;flex:1;min-height:0;--editor-height:60%}
@@ -78,11 +74,9 @@ button svg{vertical-align:middle}
 .run-button kbd{font-size:9px;color:var(--text-muted);margin-left:7px}
 .editor-mount{flex:1;min-height:0;overflow:hidden}
 .editor-mount>.cm-editor{height:100%}
-.editor-status{height:26px;flex-shrink:0;display:flex;align-items:center;gap:10px;color:var(--text-subtle);font-size:9px;padding:0 16px;border-top:1px solid var(--border);background:var(--surface-muted)}
 .mode-indicator{font-family:Menlo,monospace;font-size:8px;font-weight:600;color:var(--accent);background:var(--accent-soft);letter-spacing:.5px;padding:2px 5px;border-radius:2px;min-width:48px;text-align:center}
 .mode-indicator.insert{color:var(--purple);background:var(--purple-soft)}
 .mode-indicator.visual{color:var(--warning);background:var(--warning-soft)}
-.editor-status-right{margin-left:auto;display:flex;gap:16px}
 .split-handle{height:7px;flex-shrink:0;background:var(--surface-muted);border-top:1px solid var(--border);border-bottom:1px solid var(--border);cursor:row-resize;display:flex;align-items:center;justify-content:center;z-index:1}
 .split-handle span{width:28px;height:2px;background:var(--border-strong);border-radius:3px}
 .split-handle:hover{background:var(--surface-hover)}
@@ -125,11 +119,10 @@ button svg{vertical-align:middle}
 .markdown a{color:var(--accent)}
 .stream-cursor{height:12px;width:5px;display:inline-block;background:var(--accent);animation:pulse 1s ease infinite}
 .app-status{height:28px;background:var(--surface-muted);border-top:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 17px;font-size:8px;color:var(--text-muted);letter-spacing:.15px}
-.app-status>div{display:flex;align-items:center;gap:7px}
+.app-status>div{display:flex;align-items:center;gap:7px;white-space:nowrap}
 .app-status .haskell-logo.small{font-size:13px;margin-right:2px;color:var(--text-muted)}
 .app-status .connection-dot{width:4px;height:4px}
 .app-status .footer-divider{height:9px;margin:0 8px;background:var(--border)}
-.app-status button{font-size:8px;display:flex;align-items:center;gap:5px;color:var(--text-muted)}
 .workspace-empty,.browser-notice{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px;color:var(--text-muted)}
 .workspace-empty h2{font-size:18px;font-weight:400}
 .workspace-empty .new-button{width:170px;justify-content:center}
@@ -169,7 +162,6 @@ button svg{vertical-align:middle}
 @media(max-width:1200px){.sidebar{width:216px}
 .editor-tools{gap:5px;padding-right:9px}
 .run-button kbd{display:none}
-.editor-status-right{gap:9px}
 }
 
 .folder-setting{display:flex;align-items:center;gap:9px;width:100%;margin-top:16px;padding:9px 8px;text-align:left;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--accent)}

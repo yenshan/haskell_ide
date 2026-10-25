@@ -11,8 +11,9 @@ import { closeCompletion, fileCompletion } from './fileCompletion';
 
 const layout = EditorView.theme({
   '&':{ height:'100%' },'.cm-scroller':{ overflow:'auto' },
-  '.cm-content':{ padding:'22px 0' },'.cm-line':{ padding:'0 24px 0 16px' },
-  '.cm-gutters':{ minWidth:'58px' },'.cm-gutterElement':{ padding:'0 10px 0 16px' }
+  '.cm-content':{ padding:'22px 0' },'.cm-line':{ padding:'0 24px 0 0' },
+  '.cm-gutters':{ minWidth:'0' },'.cm-lineNumbers .cm-gutterElement':{ padding:'0 8px' },
+  '.cm-foldGutter':{ display:'none' }
 });
 type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; theme:string; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
 export function Editor(props:Props) {
