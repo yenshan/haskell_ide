@@ -42,7 +42,9 @@ AIを使う前に、未ログインの場合はターミナルで `codex login` 
 
 CodeMirror 6のHaskellハイライト、行番号、検索、括弧補完に対応しています。Vimは初期状態で有効です。`i` で挿入、`Esc` でノーマル、`:w` で保存。Vimスイッチで通常の編集にも切り替えられます。
 
-画面右上の **フォント設定（Tアイコン）** から、システム標準・JetBrains Mono・Fira Code・Hasklig・Monaspace Neon・Monaspace Argonを選択できます。文字サイズ（10〜28px）、行間、合字も調整できます。Haskellコードのプレビューとエディタへ即時反映し、設定は次回起動時にも引き継ぎます。「標準に戻す」で初期設定に戻せます。追加フォントはアプリに同梱するため、OSへのインストールや起動時のインターネット接続は不要です。日本語は環境のフォントで補完します。GHCiのターミナルのフォントは従来どおりです。
+画面右上の **エディタ設定（Tアイコン）** から、システム標準・JetBrains Mono・Fira Code・Hasklig・Monaspace Neon・Monaspace Argonを選択できます。文字サイズ（10〜28px）、行間、合字も調整できます。Haskellコードのプレビューとエディタへ即時反映し、設定は次回起動時にも引き継ぎます。「標準に戻す」でフォントと配色を初期設定に戻せます。追加フォントはアプリに同梱するため、OSへのインストールや起動時のインターネット接続は不要です。日本語は環境のフォントで補完します。GHCiのターミナルのフォントは従来どおりです。
+
+同じ画面の **配色テーマ** で、Kata Light（標準）・Catppuccin Latte・Rosé Pine Dawn・Solarized Lightを選べます。いずれも明るい背景のテーマです。エディタとプレビューの背景・行番号・選択色・構文色へ即時反映し、コードやUndo履歴を保持したまま切り替えられます。配色は次回起動時にも復元し、サイドバー・GHCi・AIアシスタントの配色は変更しません。Haskellの組み込み関数、型、演算子を分類し、それぞれテーマの色を適用しています。
 
 ファイルを開くと専用のGHCiを疑似端末（PTY）で起動し、xterm.jsの埋め込みターミナルにそのまま表示します。入力欄やプロンプト、コマンド履歴はGHCi本来のものです。Tab補完、上下キーの履歴、Ctrl+C、`:quit`、`:t`、`:info`、`:{` / `:}` による複数行入力を使えます。`getLine` の対話入力にも対応します。エディタと下部パネルの間のハンドルで高さを調整できます。下部は左にGHCi、右にAIアシスタントを同時に表示します。両者の境界をドラッグすると幅を調整でき、調整した比率は次回起動時にも引き継ぎます。境界にフォーカスして左右キーでも調整できます。幅を変えてもGHCiのセッションや入力中の式は保持します。左サイドバーは中央との境界をドラッグして幅を調整でき、調整した幅は次回起動時にも引き継ぎます。
 
@@ -100,3 +102,4 @@ Electron画面で下部の左右分割・幅調整と復元、GHCiの入力保�
 Web検索設定: [公式Codex設定リファレンス](https://developers.openai.com/codex/config-reference)。
 
 端末実装: [xterm.js API](https://xtermjs.org/docs/api/terminal/classes/terminal/)、[node-pty](https://github.com/microsoft/node-pty)。
+エディタ配色の参考: [Catppuccin](https://github.com/catppuccin/catppuccin)、[Rosé Pine](https://rosepinetheme.com/palette/)、[Solarized](https://ethanschoonover.com/solarized/)。各ライトパレットをCodeMirror向けに調整しています。

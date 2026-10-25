@@ -1,34 +1,38 @@
 import { useEffect, useRef, useState } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
-import { StreamLanguage, syntaxHighlighting } from '@codemirror/language';
-import { haskell } from '@codemirror/legacy-modes/mode/haskell';
 import { Type, X } from 'lucide-react';
-import { highlight } from './Editor';
+import { haskellLanguage } from './haskellLanguage';
+import { defaultEditorTheme, editorAppearance, editorThemes } from './editorThemes';
 import { defaultFontSettings, editorTypography, fonts, type FontSettings as Settings } from './fonts';
 
-const sample = '-- Haskellで、小さな発見を。\n-- 合字: -> => <- >>= >=> <$> <*> /= ==\nmodule Practice where\n\nsquare :: Int -> Int\nsquare x = x * x\n\nvalues = map square $ filter (>= 3) [1..10]\nexample = negate <$> Just 3 >>= pure';
+const sample = '-- Haskellで、小さな発見を。\nmodule Practice where\n\ngreet :: String -> String\ngreet name = "Hello, " ++ name\n\nsquares :: [Int]\nsquares = map (^2) $ filter (>3) [1..10]\n\n-- 合字: -> => <- >>= >=> <$> <*> /= ==';
 
-export function FontSettings({ settings,onChange,onClose }:{ settings:Settings; onChange:(settings:Settings)=>void; onClose:()=>void }) {
+export function FontSettings({ settings,theme,onChange,onThemeChange,onClose }:{ settings:Settings; theme:string; onChange:(settings:Settings)=>void; onThemeChange:(theme:string)=>void; onClose:()=>void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView|null>(null);
   const typography = useRef(new Compartment()); const initial = useRef(settings);
+  const appearance = useRef(new Compartment()); const initialTheme = useRef(theme);
   const [sizeInput,setSizeInput] = useState(String(settings.size));
   useEffect(() => setSizeInput(String(settings.size)),[settings.size]);
   const selected = fonts.find(font => font.id === settings.font) || fonts[0];
+  const selectedTheme = editorThemes.find(option => option.id === theme) || editorThemes[0];
   useEffect(() => {
     dialog.current?.showModal();
     dialog.current?.querySelector('select')?.focus();
     if (!host.current) return;
     const editor = new EditorView({ parent:host.current,state:EditorState.create({ doc:sample,extensions:[
       EditorState.readOnly.of(true),EditorView.editable.of(false),lineNumbers(),
-      StreamLanguage.define(haskell),syntaxHighlighting(highlight),
-      EditorView.theme({ '&':{ height:'100%',backgroundColor:'#fff',color:'#293329' },'.cm-content':{ padding:'16px 0' },'.cm-line':{ padding:'0 18px 0 12px' },'.cm-gutters':{ backgroundColor:'#f7f8f5',color:'#667165',borderColor:'#dfe5dc' },'&.cm-focused':{ outline:'none' } }),
+      haskellLanguage,appearance.current.of(editorAppearance(initialTheme.current)),
+      EditorView.theme({ '&':{ height:'100%' },'.cm-content':{ padding:'16px 0' },'.cm-line':{ padding:'0 18px 0 12px' },'.cm-gutterElement':{ padding:'0 8px' } }),
       typography.current.of(editorTypography(initial.current))
     ] }) });
     view.current = editor;
     return () => { editor.destroy(); view.current = null; };
   },[]);
+  useEffect(() => {
+    view.current?.dispatch({ effects:appearance.current.reconfigure(editorAppearance(theme)) });
+  },[theme]);
   useEffect(() => {
     const editor = view.current; if (!editor) return;
     editor.dispatch({ effects:typography.current.reconfigure(editorTypography(settings)) });
@@ -41,8 +45,10 @@ export function FontSettings({ settings,onChange,onClose }:{ settings:Settings; 
     const box = e.currentTarget.getBoundingClientRect();
     if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) onClose();
   }}>
-    <button className="modal-close icon-button" aria-label="フォント設定を閉じる" onClick={onClose}><X size={17}/></button>
-    <div className="font-settings-heading"><Type size={22}/><h2 id="font-settings-title">エディタのフォント</h2><p>変更はすぐに反映され、次回起動時にも引き継ぎます。</p></div>
+    <button className="modal-close icon-button" aria-label="エディタ設定を閉じる" onClick={onClose}><X size={17}/></button>
+    <div className="font-settings-heading"><Type size={22}/><h2 id="font-settings-title">エディタの表示設定</h2><p>変更はすぐに反映され、次回起動時にも引き継ぎます。</p></div>
+    <div className="theme-setting"><label>配色テーマ<select aria-label="配色テーマ" value={theme} onChange={event => onThemeChange(event.target.value)}>{editorThemes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label><div className="theme-swatches" aria-hidden="true">{[selectedTheme.palette.keyword,selectedTheme.palette.builtin,selectedTheme.palette.type,selectedTheme.palette.string,selectedTheme.palette.number,selectedTheme.palette.operator].map((color,index) => <span key={index} style={{ backgroundColor:color }}/>)}</div></div>
+    <p className="theme-description">{selectedTheme.description}</p>
     <div className="font-settings-controls">
       <label className="font-family-field">フォント<select autoFocus value={settings.font} onChange={e => onChange({ ...settings,font:e.target.value })}>{fonts.map(font => <option value={font.id} key={font.id}>{font.name}</option>)}</select></label>
       <label>文字サイズ<span className="font-size-control"><input aria-label="文字サイズ" type="number" min={10} max={28} step={1} value={sizeInput} onChange={e => {
@@ -58,8 +64,8 @@ export function FontSettings({ settings,onChange,onClose }:{ settings:Settings; 
     </div>
     <p className="font-description">{selected.description}</p>
     <label className="font-ligatures"><input type="checkbox" checked={settings.ligatures} onChange={e => onChange({ ...settings,ligatures:e.target.checked })}/><span>合字を使う<small><code>-&gt;</code> や <code>=&gt;</code> などを、つながった記号で表示します。</small></span></label>
-    <div className="font-preview-heading"><span>プレビュー</span><span>{selected.name} · {settings.size}px</span></div>
+    <div className="font-preview-heading"><span>プレビュー</span><span>{selectedTheme.name} · {selected.name} · {settings.size}px</span></div>
     <div ref={host} className="font-preview" aria-label="Haskellフォントプレビュー"/>
-    <div className="modal-actions"><button className="secondary-button" onClick={() => onChange({ ...defaultFontSettings })}>標準に戻す</button><button className="primary-button" onClick={onClose}>完了</button></div>
+    <div className="modal-actions"><button className="secondary-button" onClick={() => { onChange({ ...defaultFontSettings }); onThemeChange(defaultEditorTheme); }}>標準に戻す</button><button className="primary-button" onClick={onClose}>完了</button></div>
   </dialog>;
 }
