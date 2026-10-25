@@ -13,7 +13,7 @@ class ErrorExplanation extends WidgetType {
     const note = document.createElement('span');
     note.className = 'cm-inline-diagnostic';
     note.setAttribute('role','note'); note.tabIndex = 0;
-    note.textContent = this.diagnostics.map(d => `${d.explanation ? 'AI' : 'GHCi'}: ${d.explanation || d.message.split('\n').find(line => line.trim() && !/^\[GHC-[^\]]+\]$/.test(line.trim()))?.trim() || d.message}`).join('\n');
+    note.textContent = this.diagnostics.map(d => `AI: ${d.explanation}`).join('\n');
     note.title = this.diagnostics.map(d => `${d.explanation || ''}\nGHCi (${d.line}:${d.column}): ${d.message}`).join('\n\n');
     note.setAttribute('aria-label',note.title);
     anchor.append(note);
@@ -29,23 +29,41 @@ export const inlineDiagnostics = StateField.define<DecorationSet>({
     if (transaction.docChanged) {
       const mapped = [];
       for (let cursor = value.iter(); cursor.value; cursor.next()) {
-        const position = transaction.changes.mapPos(cursor.from,1);
-        mapped.push(cursor.value.range(transaction.state.doc.lineAt(position).to));
+        const from = transaction.changes.mapPos(cursor.from,1);
+        if (cursor.value.spec.widget) mapped.push(cursor.value.range(from));
+        else {
+          const to = transaction.changes.mapPos(cursor.to,-1);
+          if (to > from) mapped.push(cursor.value.range(from,to));
+        }
       }
       value = Decoration.set(mapped,true);
     }
     for (const effect of transaction.effects) {
       if (!effect.is(setInlineDiagnostics)) continue;
       const grouped = new Map<number,InlineDiagnostic[]>();
+      const ranges = [];
+      const underlined = new Set<string>();
       for (const d of effect.value) {
+        if (!d.explanation?.trim()) continue;
         const line = d.displayLine ?? d.line;
         if (!Number.isInteger(line) || line < 1 || line > transaction.state.doc.lines) continue;
-        grouped.set(line,[...(grouped.get(line) || []),d]);
+        const sourceLine = transaction.state.doc.line(line);
+        const characters = Array.from(sourceLine.text);
+        let anchor = sourceLine.from;
+        const start = d.startColumn ?? 0, end = d.endColumn ?? 0;
+        if (Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start && end <= characters.length && d.targetText && characters.slice(start-1,end).join('') === d.targetText) {
+          const from = sourceLine.from+characters.slice(0,start-1).join('').length;
+          const to = sourceLine.from+characters.slice(0,end).join('').length;
+          anchor = from;
+          if (!underlined.has(`${from}:${to}`)) {
+            underlined.add(`${from}:${to}`);
+            ranges.push(Decoration.mark({ class:'cm-ai-error-range',attributes:{ title:d.explanation || d.message } }).range(from,to));
+          }
+        }
+        grouped.set(anchor,[...(grouped.get(anchor) || []),d]);
       }
-      value = Decoration.set([...grouped].map(([number,diagnostics]) => {
-        const line = transaction.state.doc.line(number);
-        return Decoration.widget({ widget:new ErrorExplanation(diagnostics),side:1 }).range(line.to);
-      }),true);
+      for (const [anchor,diagnostics] of grouped) ranges.push(Decoration.widget({ widget:new ErrorExplanation(diagnostics),side:-1 }).range(anchor));
+      value = Decoration.set(ranges,true);
     }
     return value;
   },
@@ -54,14 +72,17 @@ export const inlineDiagnostics = StateField.define<DecorationSet>({
 
 export const inlineDiagnosticTheme = EditorView.baseTheme({
   '.cm-inline-diagnostic-anchor':{
-    position:'relative',display:'inline-block',width:'0',height:'0',marginLeft:'24px',verticalAlign:'top'
+    position:'relative',display:'inline-block',width:'0',height:'0',verticalAlign:'top'
   },
   '.cm-inline-diagnostic':{
-    position:'absolute',top:'0',left:'0',zIndex:'2',display:'block',width:'min(480px, 45vw)',padding:'1px 8px',
+    position:'absolute',top:'calc(1lh + 12px)',left:'0',zIndex:'2',display:'block',width:'min(480px, 45vw)',padding:'3px 8px',
     borderRadius:'4px',backgroundColor:'#fff0eb',color:'#963c2b',fontSize:'11px',
     fontFamily:'-apple-system, BlinkMacSystemFont, sans-serif',lineHeight:'1.7',
     verticalAlign:'top',whiteSpace:'pre-wrap',overflowWrap:'anywhere',overflow:'visible',
     cursor:'help',userSelect:'text'
+  },
+  '.cm-ai-error-range':{
+    textDecorationLine:'underline',textDecorationStyle:'wavy',textDecorationColor:'#b2382b',textDecorationThickness:'1.5px',textUnderlineOffset:'3px'
   },
   '.cm-inline-diagnostic:focus':{ outline:'1px solid #a04432',outlineOffset:'2px' }
 });

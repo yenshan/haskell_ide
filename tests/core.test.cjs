@@ -6,6 +6,7 @@ const path = require('node:path');
 const { Store } = require('../electron/store.cjs');
 const { Ghci, diagnosticText } = require('../electron/ghci.cjs');
 const { Codex } = require('../electron/codex.cjs');
+const { diagnosticRange } = require('../electron/diagnostic-range.cjs');
 const { GhciDiagnostics,parseDiagnostics } = require('../electron/ghci-diagnostics.cjs');
 const { Workspace, migrateLegacy } = require('../electron/workspace.cjs');
 async function temporary(t) { const root = await fs.mkdtemp(path.join(os.tmpdir(),'kata-test-')); t.after(() => fs.rm(root,{ recursive:true,force:true })); return root; }
@@ -286,11 +287,13 @@ test('GHCi starts on explicit load, reloads the same session, and analyzes only 
   assert.equal(failure.diagnostics[0].line,3);
   assert.equal(failure.diagnostics[0].severity,'error');
   assert.match(failure.diagnostics[0].message,/Couldn't match/);
-  const ai = { explainDiagnostics:async report => { assert.equal(report.source,failure.source); return new Map([[0,{ displayLine:2,explanation:'Intが必要な場所に文字列があります。数値に直してください。' }]]); } };
+  const ai = { explainDiagnostics:async report => { assert.equal(report.source,failure.source); return new Map([[0,{ displayLine:2,startColumn:11,endColumn:13,targetText:'Int',explanation:'Intが必要な場所に文字列があります。数値に直してください。' }]]); } };
   const enriched = await diagnostics.explain(item.id,failure.token,ai);
   assert.match(enriched.diagnostics[0].explanation,/Int/);
   assert.equal(enriched.diagnostics[0].line,3,'preserve the original GHCi location');
   assert.equal(enriched.diagnostics[0].displayLine,2,'use the AI-selected location for display');
+  assert.equal(enriched.diagnostics[0].startColumn,11);
+  assert.equal(enriched.diagnostics[0].endColumn,13);
   await assert.rejects(diagnostics.explain(item.id,success.token,ai),/再読み込み/);
   await store.save(item.id,'module Load where\nanswer = 42\n');
   await assert.rejects(diagnostics.explain(item.id,failure.token,ai),/再読み込み/);
@@ -345,7 +348,7 @@ require('node:readline').createInterface({ input:process.stdin }).on('line',line
       const threadId=m.params.threadId, source=m.params.input[0].text;
       if (source.includes('DISCONNECT')) return process.exit(1);
       if (m.params.outputSchema) {
-        const text = source.includes('MALFORMED') ? 'invalid JSON' : JSON.stringify({ diagnostics:[...(source.includes('BAD_LINES') ? [] : [{ index:0,displayLine:source.includes('UNLOCATED') ? 0 : 1,explanation:source.includes('LONG_MESSAGE') ? '説明'.repeat(400)+'全文の末尾' : 'Intが必要ですが文字列になっています。数値に直してください。' }]),{ index:999,displayLine:1,explanation:'invalid index' },{ index:1,displayLine:1,explanation:'warning is not an error' },...[-1,1.5,999,'2',null,undefined].map(displayLine => ({ index:0,displayLine,explanation:'invalid location' }))] });
+        const text = source.includes('MALFORMED') ? 'invalid JSON' : JSON.stringify({ diagnostics:[...(source.includes('BAD_LINES') ? [] : [{ index:0,displayLine:source.includes('UNLOCATED') ? 0 : 1,startColumn:source.includes('UNLOCATED') ? 0 : 1,endColumn:source.includes('UNLOCATED') ? 0 : 6,targetText:source.includes('UNLOCATED') ? '' : 'module',explanation:source.includes('LONG_MESSAGE') ? '説明'.repeat(400)+'全文の末尾' : 'Intが必要ですが文字列になっています。数値に直してください。' }]),{ index:999,displayLine:1,explanation:'invalid index' },{ index:1,displayLine:1,explanation:'warning is not an error' },...[-1,1.5,999,'2',null,undefined].map(displayLine => ({ index:0,displayLine,explanation:'invalid location' }))] });
         send({ method:'item/agentMessage/delta',params:{ threadId,delta:'This is a preamble.' } });
         send({ method:'item/completed',params:{ threadId,item:{ type:'agentMessage',text } } });
       } else send({ method:'item/agentMessage/delta',params:{ threadId,delta:'チャットの応答' } });
@@ -362,6 +365,7 @@ require('node:readline').createInterface({ input:process.stdin }).on('line',line
   assert.equal(explanations.size,1);
   assert.match(explanations.get(0).explanation,/Int/);
   assert.equal(explanations.get(0).displayLine,1,'AI can choose a different line from GHCi line 2');
+  assert.deepEqual([explanations.get(0).startColumn,explanations.get(0).endColumn,explanations.get(0).targetText],[1,6,'module']);
   assert.equal(item.messages.length,2);
   assert.equal(item.messages.at(-1).text,'チャットの応答');
   assert.ok(events.filter(e => e.type === 'ai-message').every(e => !e.message.text.includes('Int')));
@@ -376,7 +380,7 @@ require('node:readline').createInterface({ input:process.stdin }).on('line',line
   const requests = (await fs.readFile(path.join(root,'requests.log'),'utf8')).trim().split('\n').map(JSON.parse);
   const background = requests.find(r => r.method === 'turn/start' && r.params.outputSchema);
   assert.deepEqual(background.params.outputSchema.required,['diagnostics']);
-  assert.deepEqual(background.params.outputSchema.properties.diagnostics.items.required,['index','displayLine','explanation']);
+  assert.deepEqual(background.params.outputSchema.properties.diagnostics.items.required,['index','displayLine','startColumn','endColumn','targetText','explanation']);
   const input = JSON.parse(background.params.input[0].text);
   assert.deepEqual(input.source,[{ line:1,text:'module Solution where' },{ line:2,text:'x = "wrong"' }]);
   const thread = requests.find(r => r.method === 'thread/start' && r.params.developerInstructions.includes('GHCi load errors'));
@@ -385,4 +389,24 @@ require('node:readline').createInterface({ input:process.stdin }).on('line',line
   assert.ok(requests.some(r => r.method === 'thread/archive'));
   await assert.rejects(codex.explainDiagnostics({ ...report,source:'DISCONNECT' }),/接続が終了/);
   assert.equal(item.messages.length,2,'background failures also leave chat history untouched');
+});
+
+
+test('AI source ranges validate exact fragments, Unicode columns and ambiguous locations', () => {
+  const source = ['value = "😀あbad"','foo + foo','\tvalue = 42'];
+  assert.deepEqual(diagnosticRange(source,{ displayLine:1,startColumn:9,endColumn:15,targetText:'"😀あbad"' }),{ startColumn:9,endColumn:15,targetText:'"😀あbad"' });
+  assert.deepEqual(diagnosticRange(source,{ displayLine:1,startColumn:10,endColumn:16,targetText:'"😀あbad"' }),{ startColumn:9,endColumn:15,targetText:'"😀あbad"' },'a unique exact quote corrects mistaken column counting');
+  assert.deepEqual(diagnosticRange(source,{ displayLine:3,startColumn:10,endColumn:11,targetText:'42' }),{ startColumn:10,endColumn:11,targetText:'42' },'tabs count as one code point');
+  const empty = { startColumn:0,endColumn:0,targetText:'' };
+  for (const d of [
+    { displayLine:0,startColumn:1,endColumn:3,targetText:'foo' },
+    { displayLine:99,startColumn:1,endColumn:3,targetText:'foo' },
+    { displayLine:2,startColumn:-1,endColumn:99,targetText:'foo' },
+    { displayLine:2,startColumn:5,endColumn:6,targetText:'foo' },
+    { displayLine:1,startColumn:1,endColumn:1,targetText:'missing' },
+    { displayLine:1,startColumn:10,endColumn:10,targetText:'\uD83D' },
+    { displayLine:1,startColumn:0,endColumn:0,targetText:'' },
+    { displayLine:1,startColumn:1,endColumn:2,targetText:'value\nbad' }
+  ]) assert.deepEqual(diagnosticRange(source,d),empty);
+  assert.deepEqual(diagnosticRange(source,{ displayLine:2,startColumn:7,endColumn:9,targetText:'foo' }),{ startColumn:7,endColumn:9,targetText:'foo' },'a valid range disambiguates repeated source text');
 });

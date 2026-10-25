@@ -26,7 +26,11 @@ rl.on('line',line => {
   if (message.method === 'turn/start') {
     result = { turn:{ id:'test-turn' } };
     setTimeout(() => {
-      send({ method:'item/agentMessage/delta',params:{ threadId:message.params.threadId,delta:message.params.outputSchema ? JSON.stringify({ diagnostics:[{ index:0,displayLine:JSON.parse(message.params.input[0].text).errors[0].line === 0 ? 0 : 2,explanation:'Int型が必要な場所に文字列があります。数値に直してください。'+String.fromCharCode(10)+'型注釈と実際の値の型を確認し、返す値または宣言した型を合わせてください。'.repeat(16)+'最後まで表示される説明です。' }] }) : '型を確認しましょう。' } });
+      const context = message.params.outputSchema ? JSON.parse(message.params.input[0].text) : null;
+      const unicodeLine = context?.source.find(line => line.text.includes('😀あbad'));
+      const typeLine = context?.source.find(line => line.text === 'value :: Int');
+      const range = context?.errors[0].line === 0 ? { displayLine:0,startColumn:0,endColumn:0,targetText:'' } : unicodeLine ? { displayLine:unicodeLine.line,startColumn:9,endColumn:15,targetText:'"😀あbad"' } : { displayLine:typeLine?.line || 2,startColumn:10,endColumn:12,targetText:'Int' };
+      send({ method:'item/agentMessage/delta',params:{ threadId:message.params.threadId,delta:message.params.outputSchema ? JSON.stringify({ diagnostics:[{ index:0,...range,explanation:'Int型が必要な場所に文字列があります。数値に直してください。'+String.fromCharCode(10)+'型注釈と実際の値の型を確認し、返す値または宣言した型を合わせてください。'.repeat(16)+'最後まで表示される説明です。' }] }) : '型を確認しましょう。' } });
       send({ method:'turn/completed',params:{ threadId:message.params.threadId,turn:{ id:'test-turn',status:'completed' } } });
     },message.params.outputSchema ? 500 : 100);
   }
@@ -203,10 +207,10 @@ app.on('browser-window-created', (_,win) => {
       const validSource = 'module Solution where\nvalue :: Int\nvalue = 42\n';
       const chatBeforeLoad = await evaluate(`document.querySelector('.chat-area').textContent`);
       await editSource(invalidSource); loadKey();
-      await until(`document.querySelector('.ghci-status-popup').textContent.includes('AIが解析中') && document.querySelector('.cm-inline-diagnostic')`);
-      assert.match(await evaluate(`document.querySelector('.cm-inline-diagnostic').closest('.cm-line').textContent`),/value = "bad"/);
+      await until(`document.querySelector('.ghci-status-popup')?.textContent.includes('AIが解析中')`);
+      assert.ok(await evaluate(`!document.querySelector('.cm-inline-diagnostic') && !document.querySelector('.cm-ai-error-range')`),'raw GHCi errors are not displayed while AI is analyzing');
       await editSource(validSource);
-      assert.ok(await evaluate(`Boolean(document.querySelector('.cm-inline-diagnostic'))`),'editing keeps the existing diagnostic visible');
+      assert.ok(await evaluate(`!document.querySelector('.cm-inline-diagnostic')`),'editing while awaiting AI does not display raw GHCi errors');
       key('S',[process.platform === 'darwin' ? 'meta' : 'control']);
       await until(`!document.querySelector('.cm-inline-diagnostic') && !document.querySelector('.ghci-status-popup')`);
       await until(`!document.querySelector('.load-button').disabled`);
@@ -216,7 +220,10 @@ app.on('browser-window-created', (_,win) => {
       assert.ok(await evaluate(`!document.querySelector('.cm-inline-diagnostic')`));
       await editSource(invalidSource); loadKey();
       await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.includes('AI: Int型')`);
-      assert.match(await evaluate(`document.querySelector('.cm-inline-diagnostic').closest('.cm-line').textContent`),/value :: Int/,'AI explanation uses displayLine 2 instead of GHCi line 3');
+      assert.match(await evaluate(`(() => { const line=document.querySelector('.cm-inline-diagnostic').closest('.cm-line').cloneNode(true); line.querySelectorAll('.cm-inline-diagnostic-anchor').forEach(note => note.remove()); return line.textContent; })()`),/value :: Int/,'AI explanation uses displayLine 2 instead of GHCi line 3');
+      assert.equal(await evaluate(`document.querySelector('.cm-ai-error-range').textContent`),'Int','underline only the AI-selected source fragment');
+      assert.ok(await evaluate(`getComputedStyle(document.querySelector('.cm-ai-error-range')).textDecorationLine.includes('underline')`),'the selected fragment has a visible underline');
+      assert.ok(await evaluate(`(() => { const range=document.querySelector('.cm-ai-error-range').getBoundingClientRect(); const note=document.querySelector('.cm-inline-diagnostic').getBoundingClientRect(); return Math.abs(note.left-range.left) < 2 && note.top >= range.bottom+9 && note.top <= range.bottom+18; })()`),'the explanation starts directly below the underlined fragment');
       assert.ok(await evaluate(`document.querySelector('.cm-inline-diagnostic').textContent.endsWith('最後まで表示される説明です。')`),'the entire AI explanation is preserved');
       assert.ok(await evaluate(`(() => { const note=document.querySelector('.cm-inline-diagnostic'); return getComputedStyle(note).whiteSpace === 'pre-wrap' && note.getBoundingClientRect().height > 40 && note.scrollHeight <= note.clientHeight+1 && note.scrollWidth <= note.clientWidth+1; })()`),'long explanations wrap across lines without clipping');
       assert.equal(await evaluate(`document.querySelector('.chat-area').textContent`),chatBeforeLoad,'background analysis leaves chat unchanged');
@@ -227,15 +234,23 @@ app.on('browser-window-created', (_,win) => {
       await until(`!document.querySelector('.ghci-status-popup')`);
       assert.ok(await evaluate(`Boolean(document.querySelector('.cm-inline-diagnostic'))`),'dismissing the popup keeps inline explanations');
       fs.writeFileSync(path.join(artifacts,'electron-inline-errors.png'),(await win.webContents.capturePage()).toPNG());
+      // Unicode code points must be converted correctly to CodeMirror's UTF-16 positions.
+      await editSource('module Solution where'+String.fromCharCode(10)+'value :: Int'+String.fromCharCode(10)+'value = "😀あbad"'+String.fromCharCode(10)); loadKey();
+      await until(`document.querySelector('.cm-ai-error-range')?.textContent === '"😀あbad"'`);
+      assert.equal(await evaluate(`document.querySelector('.cm-ai-error-range').textContent.length`),8,'an emoji occupies two UTF-16 units but one AI column');
+      await editSource(invalidSource); loadKey();
+      await until(`document.querySelector('.cm-ai-error-range')?.textContent === 'Int'`);
       // Explanations track inserted lines and persist until a successful save.
       await evaluate(`document.querySelector('.cm-content').focus()`);
       key('Home',[process.platform === 'darwin' ? 'meta' : 'control']);
       await win.webContents.insertText('-- inserted above the error'+String.fromCharCode(10));
       assert.ok(await evaluate(`Boolean(document.querySelector('.cm-inline-diagnostic'))`),'line insertion keeps the AI explanation');
+      assert.equal(await evaluate(`document.querySelector('.cm-ai-error-range').textContent`),'Int','underline follows the source when a line is inserted');
       await pause(1100);
       assert.ok(await evaluate(`Boolean(document.querySelector('.cm-inline-diagnostic')) && Boolean(document.querySelector('.dirty-dot'))`),'waiting does not auto-save or clear explanations');
       key('S',[process.platform === 'darwin' ? 'meta' : 'control']);
       await until(`!document.querySelector('.cm-inline-diagnostic')`);
+      assert.ok(await evaluate(`!document.querySelector('.cm-ai-error-range')`),'saving also clears the underline');
       // Saving an unchanged document also clears explanations.
       loadKey();
       await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.includes('AI: Int型')`);

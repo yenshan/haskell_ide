@@ -258,7 +258,7 @@ export function App() {
         update({ source:report.source,phase:'done',report });
       }
     } catch (error) {
-      update({ source:report?.source ?? source,phase:'error',report,note:`${report ? 'AI解析に失敗しました。GHCiのエラーを表示しています。' : ''}${error instanceof Error ? error.message : String(error)}` });
+      update({ source:report?.source ?? source,phase:'error',report,note:`${report ? 'AI解析に失敗しました。GHCiの出力はターミナルで確認できます。' : ''}${error instanceof Error ? error.message : String(error)}` });
     } finally {
       loadingGhci.current.delete(p.id);
       if (epoch === folderEpoch.current) setBusy(prev => ({ ...prev,[p.id]:false }));
