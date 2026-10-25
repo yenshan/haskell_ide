@@ -73,7 +73,7 @@ app.whenReady().then(async () => {
     closeAllowed = false; rendererReady = false;
     const stateFile = path.join(app.getPath('userData'),'window-state.json');
     const state = restoreWindowState(stateFile,screen);
-    win = new BrowserWindow({ ...state.bounds, minWidth:state.minWidth, minHeight:state.minHeight, show:false, backgroundColor:'#ffffff', title:'Kata — Haskell workspace', titleBarStyle:'hiddenInset', trafficLightPosition:{ x:20, y:20 }, webPreferences:{ preload:path.join(__dirname,'preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true } });
+    win = new BrowserWindow({ ...state.bounds, minWidth:state.minWidth, minHeight:state.minHeight, show:false, backgroundColor:'#ffffff', title:'Kata — Haskell workspace', titleBarStyle:'default', webPreferences:{ preload:path.join(__dirname,'preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true } });
     if (state.maximized) win.maximize();
     trackWindowState(win,stateFile,state);
     win.once('ready-to-show',() => win.show());
