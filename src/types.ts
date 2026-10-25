@@ -1,0 +1,18 @@
+export type Message = { id:string; role:'user'|'assistant'; text:string; at:string; pending?:boolean };
+export type Problem = { id:string; title:string; fileName:string; createdAt:string; updatedAt:string; threadId:string|null; messages:Message[]; code:string };
+export type Summary = Omit<Problem, 'code'|'messages'> & { messageCount:number };
+export type WorkspaceInfo = { path:string; name:string; warning:string|null };
+export type Run = { command:string; output:string; failed:boolean; at:string };
+export type CodexStatus = { state:'disconnected'|'connecting'|'connected'|'error'; message:string; authenticated?:boolean; models:{ id:string; name:string; isDefault:boolean }[] };
+export type AppEvent = { type:'workspace-changed' } | { type:'before-close' } | { type:'ghci-result'; id:string; result:Run } | { type:'ghci-exit'; id:string; message:string } | { type:'codex-status'; status:CodexStatus } | { type:'ai-message'; id:string; message:Message } | { type:'ai-messages'; id:string; messages:Message[] } | { type:'notice'; message:string };
+export interface Bridge {
+  list():Promise<Summary[]>; create(title:string):Promise<Problem>; open(id:string):Promise<Problem>;
+  save(id:string, code:string):Promise<{ savedAt:string }>;
+  workspaceInfo():Promise<WorkspaceInfo>; chooseFolder():Promise<WorkspaceInfo|null>;
+  ghciStart(id:string):Promise<Run>; ghciRun(id:string, command:string):Promise<Run>;
+  ghciInterrupt(id:string):Promise<void>; ghciRestart(id:string):Promise<Run>;
+  codexConnect():Promise<CodexStatus>; codexStatus():Promise<CodexStatus>;
+  ask(id:string, text:string, context:string, model:string):Promise<unknown>; stopAI(id:string):Promise<void>;
+  reveal(id:string):Promise<void>; closeReady():Promise<void>; onEvent(callback:(e:AppEvent)=>void):()=>void;
+}
+declare global { interface Window { kata:Bridge } }
