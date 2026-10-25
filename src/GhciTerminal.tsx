@@ -4,23 +4,13 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { AppEvent } from './types';
 
-export type TerminalHandle = { focus:()=>void; capture:()=>{ text:string; selected:boolean } };
+export type TerminalHandle = { focus:()=>void };
 type Props = { id:string; generation:number; onError:(error:unknown)=>void; onState:(alive:boolean)=>void };
 export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTerminal(props,ref) {
   const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal|null>(null);
   const current = useRef(props); current.current=props;
   useImperativeHandle(ref,() => ({
-    focus:() => terminal.current?.focus(),
-    capture:() => {
-      const term=terminal.current; if (!term) return { text:'',selected:false };
-      const selection=term.getSelection(); if (selection.trim()) return { text:selection.slice(-20000),selected:true };
-      const buffer=term.buffer.active; let text='';
-      for (let row=Math.max(0,buffer.length-160);row<buffer.length;row++) {
-        const line=buffer.getLine(row); if (!line) continue;
-        text += (line.isWrapped?'':'\n')+line.translateToString(true);
-      }
-      return { text:text.trim().slice(-20000),selected:false };
-    }
+    focus:() => terminal.current?.focus()
   }),[]);
   useEffect(() => {
     if (!host.current) return;

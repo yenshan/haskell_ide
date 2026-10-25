@@ -41,7 +41,6 @@ function initialAISettings():{ model:string; effort:string } {
 }
 
 export function App() {
-  usePaneNavigation();
   const [items,setItems] = useState<Summary[]>([]); const [problem,setProblem] = useState<Problem|null>(null);
   const problemRef = useRef<Problem|null>(null); const codeRef = useRef(''); const dirtyRef = useRef(false);
   const folderEpoch = useRef(0);
@@ -63,7 +62,7 @@ export function App() {
   const [mode,setMode] = useState('NORMAL'); const [cursor,setCursor] = useState([1,1]);
   const [diagnostics,setDiagnostics] = useState<Record<string,Diagnostic>>({}); const [busy,setBusy] = useState<Record<string,boolean>>({});
   const [dead,setDead] = useState<Record<string,boolean>>({}); const [generation,setGeneration] = useState<Record<string,number>>({});
-  const [question,setQuestion] = useState(''); const [attachedOutput,setAttachedOutput] = useState('');
+  const [question,setQuestion] = useState('');
   const [aiSettings,setAISettings] = useState(initialAISettings);
   const [codexStatus,setCodexStatus] = useState<CodexStatus>({ state:'disconnected',message:'未接続',models:[] });
   const selectedModel = codexStatus.models.find(model => model.id === aiSettings.model) || codexStatus.models.find(model => model.id === codexStatus.defaultModel) || codexStatus.models.find(model => model.isDefault) || codexStatus.models[0];
@@ -140,7 +139,7 @@ export function App() {
   const activate = useCallback(async (p:Problem) => {
     problemRef.current = p; codeRef.current = p.code; dirtyRef.current = false;
     setProblem(p); setCode(p.code); setDirty(false);
-    setQuestion(''); setAttachedOutput(''); setChatMap(prev => ({ ...prev, [p.id]:p.messages }));
+    setQuestion(''); setChatMap(prev => ({ ...prev, [p.id]:p.messages }));
     localStorage.setItem('kata-last',p.id);
     setDead(prev => ({ ...prev,[p.id]:false }));
   }, []);
@@ -230,22 +229,20 @@ export function App() {
     try { while (dirtyRef.current) await save(); const p = await api.create(newTitle.trim() || 'Untitled.hs'); setNewOpen(false); setNewTitle(''); await refresh(); await activate(p); }
     catch (e) { notify(e); } finally { switching.current = false; }
   }
-  async function sendQuestion(text = question, context = attachedOutput) {
+  async function sendQuestion(text = question, context = '') {
     if (!text.trim() || !id || aiBusy || sendingQuestions.current.has(id)) return;
-    const target = id; sendingQuestions.current.add(target); setQuestion(''); setAttachedOutput('');
+    const target = id; sendingQuestions.current.add(target); setQuestion('');
     try { await save(); await api.ask(target,text,context,model,effort); }
     catch (e) { notify(e); }
     finally { sendingQuestions.current.delete(target); }
   }
-  function askOutput(error?:Diagnostic) {
-    const capture = error ? { text:error.output,selected:false } : terminalRef.current?.capture();
-    if (!capture?.text.trim()) { notify('送信する端末出力がありません。'); return; }
+  function askError(error:Diagnostic) {
+    if (!error.output.trim()) { notify('送信するエラー出力がありません。'); return; }
     setRight(true);
-    const prompt = error?'このGHCiのエラーの原因と、修正のヒントを教えてください。':capture.selected?'選択したGHCiの出力について教えてください。':'直近のGHCiの出力について教えてください。';
-    if (error) { setAttachedOutput(capture.text); setQuestion(prompt); }
-    else void sendQuestion(prompt,capture.text);
+    void sendQuestion('このGHCiのエラーの原因と、修正のヒントを教えてください。',error.output);
     setTimeout(() => questionInput.current?.focus(),0);
   }
+  usePaneNavigation(() => { if (lastError && !aiBusy) askError(lastError); });
   async function restart() {
     if (!id || busy[id]) return; setBusy(prev => ({ ...prev,[id]:true }));
     try {
@@ -263,7 +260,7 @@ export function App() {
       folderEpoch.current++;
       problemRef.current = null; codeRef.current = ''; dirtyRef.current = false;
       setProblem(null); setCode(''); setDirty(false); setFolder(info); setQuery('');
-      setDiagnostics({}); setBusy({}); setDead({}); setGeneration({}); setChatMap({}); setQuestion(''); setAttachedOutput('');
+      setDiagnostics({}); setBusy({}); setDead({}); setGeneration({}); setChatMap({}); setQuestion('');
       setCodexStatus(await api.codexStatus());
       const list = await api.list(); setItems(list);
       if (list[0]) await activate(await api.open(list[0].id));
@@ -302,7 +299,7 @@ export function App() {
           <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
           <section id="ghci-panel" className="lower-pane ghci-panel" aria-labelledby="ghci-heading">
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
-              <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに聞く" title="エラーをAIに聞く" onClick={() => askOutput(lastError)}><Sparkles size={12}/><span>エラーをAIに聞く</span></button>}<button className="ask-output-button" aria-label="出力をAIに相談" title="選択範囲、未選択なら直近の端末出力をAIに送信" disabled={aiBusy} onClick={() => askOutput()}><Sparkles size={12}/><span>出力をAIに相談</span></button><button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
+              <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに相談" title="エラー内容をAIに送信 (Ctrl-J → e)" disabled={aiBusy} onClick={() => askError(lastError)}><Sparkles size={12}/><span>エラーをAIに相談</span></button>}<button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
             </div>
             <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
           </section>
@@ -324,7 +321,6 @@ export function App() {
             </div>
               <div ref={chatArea} className="chat-area" role="log" aria-label="チャット履歴" aria-live="polite"><div className="messages">{messages.map(m => <div key={m.id} className={`message ${m.role}`}><div className="message-author"><span>{m.role === 'assistant' ? 'Codex' : 'You'}</span><time>{time(m.at)}</time></div><div className="markdown">{m.pending && !m.text ? <Loader2 size={14} className="spin" aria-label="応答中"/> : <ReactMarkdown>{m.text}</ReactMarkdown>}{m.pending && m.text && <span className="stream-cursor"/>}</div></div>)}</div></div>
               <div className="composer-area">
-                {attachedOutput && <div className="attached-error"><details className="attached-preview"><summary>GHCiの端末出力を添付</summary><pre>{attachedOutput}</pre></details><button type="button" className="icon-button" aria-label="添付を外す" onClick={() => setAttachedOutput('')}><X size={12}/></button></div>}
                 <form className="composer" onSubmit={e => { e.preventDefault(); void sendQuestion(); }}>
                   <input ref={questionInput} aria-label="AIへの質問" value={question} placeholder="質問を入力…" disabled={!problem} maxLength={50000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) e.preventDefault(); }}/>
                   {aiBusy ? <button type="button" className="send-button stop" aria-label="応答を停止" onClick={() => api.stopAI(id).catch(notify)}><Square size={12} fill="currentColor"/></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!question.trim() || !problem}><ArrowUp size={16}/></button>}
@@ -337,6 +333,6 @@ export function App() {
     {toast && <div className="toast" role="status"><span>{toast}</span><button className="icon-button" aria-label="通知を閉じる" onClick={() => setToast('')}><X size={14}/></button></div>}
     {fontSettingsOpen && <FontSettings settings={fontSettings} theme={editorTheme} onThemeChange={setEditorTheme} onChange={setFontSettings} onClose={() => setFontSettingsOpen(false)}/>}
     {newOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setNewOpen(false); }}><form className="modal new-modal" onSubmit={e => { e.preventDefault(); void create(); }}><button type="button" className="modal-close icon-button" aria-label="閉じる" onClick={() => setNewOpen(false)}><X size={17}/></button><Logo/><span className="eyebrow">NEW HASKELL FILE</span><h2>新しいファイル</h2><p>選択中のフォルダーに .hs ファイルを作成します。</p><label>ファイル名<input autoFocus placeholder="例：SumOfOddNumbers.hs" value={newTitle} onChange={e => setNewTitle(e.target.value)} maxLength={160}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewOpen(false)}>キャンセル</button><button className="primary-button" type="submit"><Plus size={14}/>ファイルを作成</button></div></form></div>}
-    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['領域移動（左 / 下 / 上 / 右）','Ctrl J → h / j / k / l'],['GHCiにフォーカス','⌘ J / Ctrl Shift J'],['ファイル内の単語で補完','Ctrl Space / Tab / Enter'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。領域移動は全OS共通です。</p></div></div>}
+    {help && <div className="modal-backdrop" onMouseDown={e => { if (e.target===e.currentTarget) setHelp(false); }}><div className="modal help-modal"><button className="modal-close icon-button" aria-label="ヘルプを閉じる" onClick={() => setHelp(false)}><X size={17}/></button><Command size={23}/><h2>キーボードで、軽やかに。</h2>{[['新しいファイル','⌘ N'],['ファイルを保存','⌘ S / :w'],['保存してGHCiを再読込','⌘ Enter'],['領域移動（左 / 下 / 上 / 右）','Ctrl J → h / j / k / l'],['エラーをAIに相談','Ctrl J → e'],['GHCiにフォーカス','⌘ J / Ctrl Shift J'],['ファイル内の単語で補完','Ctrl Space / Tab / Enter'],['Vim 挿入 / ノーマルモード','i / Esc'],['Vim 検索 / 元に戻す','/ / u'],['GHCi 実行を中断','Ctrl C'],['このヘルプ','⌘ /']].map(([label,key]) => <div className="shortcut" key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Windows / Linux では ⌘ の代わりに Ctrl を使用します。領域移動は全OS共通です。</p></div></div>}
   </div>;
 }

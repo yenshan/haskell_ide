@@ -9,6 +9,29 @@ process.env.KATA_WORKSPACE = path.join(temporary,'workspace');
 process.env.KATA_RUNTIME = path.join(temporary,'runtime');
 fs.mkdirSync(process.env.KATA_WORKSPACE);
 fs.writeFileSync(path.join(process.env.KATA_WORKSPACE,'Solution.hs'),'-- Multiples of 3 or 5\nmodule Solution where\nsolution :: Integer -> Integer\nsolution n = sum [x | x <- [1 .. n-1], x `mod` 3 == 0 || x `mod` 5 == 0]\n');
+// Error consultation sends immediately; keep this test independent of real AI services.
+process.env.KATA_CODEX = path.join(temporary,'fake-codex.cjs');
+fs.writeFileSync(process.env.KATA_CODEX,`#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const rl = require('node:readline').createInterface({ input:process.stdin });
+const send = message => process.stdout.write(JSON.stringify(message)+'\\n');
+rl.on('line',line => {
+  const message = JSON.parse(line); let result = {};
+  fs.appendFileSync(path.join(__dirname,'requests.log'),line+'\\n');
+  if (message.method === 'account/read') result = { requiresOpenaiAuth:false,account:null };
+  if (message.method === 'model/list') result = { data:[] };
+  if (message.method === 'config/read') result = { config:{} };
+  if (message.method === 'thread/start') result = { thread:{ id:'test-thread' } };
+  if (message.method === 'turn/start') {
+    result = { turn:{ id:'test-turn' } };
+    setTimeout(() => {
+      send({ method:'item/agentMessage/delta',params:{ threadId:message.params.threadId,delta:'型を確認しましょう。' } });
+      send({ method:'turn/completed',params:{ threadId:message.params.threadId,turn:{ id:'test-turn',status:'completed' } } });
+    },100);
+  }
+  if (message.id !== undefined) send({ id:message.id,result });
+});`,{ mode:0o755 });
 const root = path.resolve(__dirname,'..');
 let finished = false;
 const timeout = setTimeout(() => finish(new Error('Electron smoke test timed out')),30000);
@@ -23,7 +46,12 @@ app.on('browser-window-created', (_,win) => {
   win.webContents.once('did-finish-load', async () => {
     const evaluate = code => win.webContents.executeJavaScript(code,true);
     const pause = ms => new Promise(r => setTimeout(r,ms));
-    async function until(code) { for(let i=0;i<100;i++) { const value = await evaluate(code); if(value) return value; await pause(60); } throw new Error('Timed out: '+code); }
+    const key = (keyCode,modifiers = []) => {
+      win.webContents.sendInputEvent({ type:'keyDown',keyCode,modifiers });
+      win.webContents.sendInputEvent({ type:'keyUp',keyCode,modifiers });
+    };
+    const consultError = (held = false) => { key('J',['control']); key('E',held ? ['control'] : []); };
+    async function until(code) { for(let i=0;i<100;i++) { const value = await evaluate(`(async () => Boolean(await (${code})))()`); if(value) return value; await pause(60); } throw new Error('Timed out: '+code); }
     try {
       await until(`document.querySelector('.xterm') && document.querySelector('.cm-content')`);
       assert.match(await evaluate('document.body.innerText'),/Multiples of 3 or 5/);
@@ -31,14 +59,22 @@ app.on('browser-window-created', (_,win) => {
       await evaluate(`document.querySelector('.cm-content').focus()`);
       win.webContents.sendInputEvent({ type:'keyDown', keyCode:'G', modifiers:['shift'] });
       win.webContents.sendInputEvent({ type:'keyUp', keyCode:'G', modifiers:['shift'] });
-      win.webContents.sendInputEvent({ type:'char', keyCode:'o' });
-      for (const character of '-- smoke edit') win.webContents.sendInputEvent({ type:'char', keyCode:character });
+      win.webContents.sendInputEvent({ type:'keyDown',keyCode:'O' });
+      win.webContents.sendInputEvent({ type:'keyUp',keyCode:'O' });
+      await until(`document.querySelector('.mode-indicator').textContent === 'INSERT'`);
+      await win.webContents.insertText('-- smoke edit');
       win.webContents.sendInputEvent({ type:'keyDown',keyCode:'Escape' });
       win.webContents.sendInputEvent({ type:'keyUp',keyCode:'Escape' });
       await until(`document.querySelector('.cm-content').textContent.includes('smoke edit')`);
       await until(`!document.querySelector('.dirty-dot')`);
       const problem = await evaluate(`window.kata.list().then(async list => window.kata.open(list[0].id))`);
       assert.match(problem.code,/smoke edit/);
+      assert.match(problem.code,/^-- smoke edit$/m);
+      const editorText = await evaluate(`document.querySelector('.cm-content').textContent`);
+      consultError();
+      await pause(100);
+      assert.equal(await evaluate(`document.querySelector('.cm-content').textContent`),editorText,'error shortcut without an error leaves the editor unchanged');
+      assert.ok(!fs.existsSync(path.join(temporary,'requests.log')) || !fs.readFileSync(path.join(temporary,'requests.log'),'utf8').includes('"method":"turn/start"'));
       await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => s.data.includes('ghci>'))`);
       await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution 10\\r')`);
       await until(`window.kata.ghciStart(${JSON.stringify(problem.id)}).then(s => /23[\\r\\n]/.test(s.data))`);
@@ -46,9 +82,34 @@ app.on('browser-window-created', (_,win) => {
       await until(`!document.querySelector('.run-button').disabled`);
       await evaluate(`window.kata.ghciWrite(${JSON.stringify(problem.id)},'solution "ten"\\r')`);
       await until(`document.querySelector('.ask-error-button')`);
-      await evaluate(`document.querySelector('.ask-error-button').click()`);
-      assert.match(await evaluate(`document.querySelector('[aria-label="AIへの質問"]').value`),/エラーの原因/);
-      assert.ok(await evaluate(`!!document.querySelector('.attached-error')`));
+      assert.equal(await evaluate(`document.querySelector('.ask-error-button').textContent`),'エラーをAIに相談');
+      assert.ok(await evaluate(`!document.querySelector('.ask-output-button')`));
+      await evaluate(`document.querySelector('[aria-label="AIサイドバーを閉じる"]').click()`);
+      await evaluate(`document.querySelector('.ask-error-button').click(); document.querySelector('.ask-error-button').click()`);
+      await until(`document.querySelector('.chat-area').textContent.includes('型を確認しましょう。')`);
+      assert.ok(await evaluate(`!document.querySelector('#ai-sidebar-content').hidden`));
+      assert.equal(await evaluate(`document.querySelector('[aria-label="AIへの質問"]').value`),'');
+      const turns = fs.readFileSync(path.join(temporary,'requests.log'),'utf8').trim().split('\n').map(JSON.parse).filter(message => message.method === 'turn/start');
+      assert.equal(turns.length,1,'double clicks send only once');
+      assert.match(turns[0].params.input[0].text,/GHCiの実行結果/);
+      assert.match(turns[0].params.input[0].text,/Couldn't match type/);
+      // Native chords must work before xterm and Vim consume either key.
+      for (const [selector,held] of [['.xterm-helper-textarea',false],['.cm-content',true]]) {
+        await until(`!document.querySelector('.ask-error-button').disabled`);
+        await evaluate(`document.querySelector('[aria-label="AIサイドバーを閉じる"]').click(); document.querySelector(${JSON.stringify(selector)}).focus()`);
+        consultError(held);
+        consultError(held);
+        await until(`!document.querySelector('#ai-sidebar-content').hidden && document.querySelector('.ask-error-button').disabled`);
+        await until(`!document.querySelector('.ask-error-button').disabled`);
+      }
+      const shortcutTurns = fs.readFileSync(path.join(temporary,'requests.log'),'utf8').trim().split('\n').map(JSON.parse).filter(message => message.method === 'turn/start');
+      assert.equal(shortcutTurns.length,3,'each shortcut sends once, including with Control held');
+      assert.equal(await evaluate(`document.querySelector('.cm-content').textContent`),editorText,'shortcut never inserts text');
+      await evaluate(`document.querySelector('.cm-content').focus()`);
+      key('J',['control']); key('J');
+      await until(`document.activeElement.closest('#ghci-panel')`);
+      key('J',['control']); key('K');
+      await until(`document.activeElement.closest('.editor-panel')`);
       const artifacts = path.join(root,'artifacts'); fs.mkdirSync(artifacts,{ recursive:true });
       fs.writeFileSync(path.join(artifacts,'electron-smoke.png'),(await win.webContents.capturePage()).toPNG());
       await evaluate(`document.querySelector('.new-button').click()`);

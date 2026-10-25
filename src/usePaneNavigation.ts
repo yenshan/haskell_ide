@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type Pane = 'editor'|'ghci'|'assistant'|'sidebar';
 type Direction = 'h'|'j'|'k'|'l';
@@ -27,7 +27,9 @@ function focusPane(pane:Pane) {
   else if (pane === 'sidebar') root?.querySelector<HTMLButtonElement>('.sidebar-heading button')?.focus();
 }
 
-export function usePaneNavigation() {
+export function usePaneNavigation(askError:() => void) {
+  const askErrorRef = useRef(askError);
+  askErrorRef.current = askError;
   useEffect(() => {
     let source:Pane|undefined, timer:ReturnType<typeof setTimeout>|undefined;
     let center:'editor'|'ghci' = 'editor';
@@ -49,8 +51,9 @@ export function usePaneNavigation() {
         // Modifier keys do not cancel the chord, so Control can stay held down.
         if (['Control','Shift','Alt','Meta'].includes(event.key)) return;
         cancel();
-        if (key === 'escape' || (!event.metaKey && !event.altKey && ['h','j','k','l'].includes(key))) {
+        if (key === 'escape' || (!event.metaKey && !event.altKey && ['h','j','k','l','e'].includes(key))) {
           swallow(event); consumed.add(code);
+          if (key === 'e') { askErrorRef.current(); return; }
           const next = from === 'assistant' && key === 'h' ? center : neighbors[from][key as Direction];
           if (next) focusPane(next);
           return;

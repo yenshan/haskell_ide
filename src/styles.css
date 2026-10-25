@@ -91,7 +91,7 @@ button svg{vertical-align:middle}
 .lower-header{min-height:41px;flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface-muted)}
 .lower-header h2{display:flex;align-items:center;gap:7px;flex-shrink:0;margin:0;font-size:11px;font-weight:500;color:var(--text-muted)}
 @container (max-width:560px){.ghci-tools .run-button kbd{display:none}}
-@container (max-width:420px){.ghci-tools .ask-error-button>span,.ghci-tools .ask-output-button>span{display:none}}
+@container (max-width:420px){.ghci-tools .ask-error-button>span{display:none}}
 .ai-model-settings{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;margin-left:auto;flex:1 1 180px}
 .ai-model-settings select{flex:1;min-width:0;max-width:210px;height:27px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-muted);font-size:10px;padding:0 7px;cursor:pointer;text-overflow:ellipsis}
 .ai-model-settings select[aria-label="推論レベル"]{max-width:145px}
@@ -108,8 +108,6 @@ button svg{vertical-align:middle}
 .send-button:hover{color:var(--accent-hover);background:var(--primary-hover)}
 .send-button:disabled{opacity:1;background:var(--surface-hover);color:var(--text-muted)}
 .send-button.stop{background:var(--primary)}
-.attached-error{display:flex;align-items:flex-start;gap:5px;color:var(--warning);font-size:10px;background:var(--warning-soft);border:1px solid var(--warning-border);padding:3px 6px;margin-bottom:8px;border-radius:4px}
-.attached-error .icon-button{margin-left:auto;width:19px;height:19px}
 .messages{padding:16px 20px}
 .message{margin-bottom:25px;min-width:0}
 .message-author{display:flex;align-items:center;gap:7px;font-size:9px;font-weight:550;color:var(--accent);margin-bottom:11px}
@@ -185,11 +183,6 @@ button svg{vertical-align:middle}
 .ghci-terminal>.xterm{height:100%;padding:12px 16px;box-sizing:border-box;background:var(--surface);--vscode-scrollbar-shadow:transparent}
 .ghci-terminal .xterm .xterm-viewport{background-color:var(--surface);scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
 .ghci-terminal .xterm .composition-view{background:var(--surface);color:var(--text)}
-.ask-output-button{display:flex;align-items:center;gap:5px;color:var(--accent);font-size:9px;padding:5px 7px;border-radius:4px}
-.ask-output-button:hover{background:var(--accent-soft)}
-.attached-preview{flex:1;min-width:0;margin:0;font-size:10px;color:var(--text-muted)}
-.attached-preview summary{cursor:pointer}
-.attached-preview pre{font-family:Menlo,Consolas,monospace;font-size:10px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;max-height:100px;overflow:auto;background:var(--surface-muted);padding:8px;border:1px solid var(--border);border-radius:4px}
 .sidebar-resizer{position:relative;width:5px;flex:0 0 5px;cursor:col-resize;touch-action:none;background:var(--surface-muted);z-index:2;outline:none}
 .sidebar-resizer:before{content:'';position:absolute;inset:0 2px;background:var(--border)}
 .sidebar-resizer:hover,.sidebar-resizer:focus-visible{background:var(--accent-soft)}
