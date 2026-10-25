@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type, PanelBottom, PanelRight } from 'lucide-react';
+import { Plus, Search, ChevronDown, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, Play, RotateCcw, Save, Sparkles, Terminal, X, CheckCheck, Type, PanelBottom, PanelRight } from 'lucide-react';
+import { AssistantPanel } from './AssistantPanel';
 import { Editor } from './Editor';
 import { GhciTerminal, type TerminalHandle } from './GhciTerminal';
 import { SidebarResizer } from './SidebarResizer';
@@ -8,15 +8,17 @@ import { FontSettings } from './FontSettings';
 import { fontSettingsKey, loadFontSettings } from './fonts';
 import { editorThemeKey, loadEditorTheme } from './editorThemes';
 import { usePaneNavigation } from './usePaneNavigation';
-import type { AppEvent, CodexStatus, Message, Problem, Diagnostic, Summary, WorkspaceInfo, GhciReport } from './types';
+import type { GhciReport } from './types';
+import { useWorkspace } from './useWorkspace';
+import { useAssistant } from './useAssistant';
+import { useGhci } from './useGhci';
+import type { GhciLoadState } from './useGhci';
 
 const api = window.kata;
-const time = (date:string) => new Date(date).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
 const fileDate = (value:string) => new Date(value).toLocaleDateString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit' });
 function Logo({ small = false }:{ small?:boolean }) { return <span className={`haskell-logo ${small?'small':''}`}>λ<span>=</span></span>; }
 
 type SidebarWidths = { left:number; right:number };
-type GhciLoadState = { source:string; phase:'loading'|'analyzing'|'done'|'error'; report?:GhciReport; note?:string };
 const noInlineDiagnostics:GhciReport['diagnostics'] = [];
 function initialSidebarWidths():SidebarWidths {
   const fallback = { left:window.innerWidth >= 1500 ? 254 : window.innerWidth <= 1200 ? 216 : 244,right:window.innerWidth >= 1500 ? 380 : 330 };
@@ -29,18 +31,22 @@ function initialSidebarWidths():SidebarWidths {
 function initialAssistantOpen() {
   try { return localStorage.getItem('kata-ai-sidebar-open') !== 'off'; } catch { return true; }
 }
-function initialAISettings():{ model:string; effort:string } {
-  try {
-    const saved = JSON.parse(localStorage.getItem('kata-ai-settings') || 'null');
-    return { model:typeof saved?.model === 'string' ? saved.model : '',effort:typeof saved?.effort === 'string' ? saved.effort : '' };
-  } catch { return { model:'',effort:'' }; }
-}
 
 export function App() {
-  const [items,setItems] = useState<Summary[]>([]); const [problem,setProblem] = useState<Problem|null>(null);
-  const problemRef = useRef<Problem|null>(null); const codeRef = useRef(''); const dirtyRef = useRef(false);
-  const folderEpoch = useRef(0);
-  const [code,setCode] = useState(''); const [dirty,setDirty] = useState(false); const [saving,setSaving] = useState(false);
+  const [toast,setToast] = useState('');
+  const notify = useCallback((error:unknown) => setToast(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /,'') : String(error)), []);
+  const terminalRef = useRef<TerminalHandle>(null);
+  const workspace = useWorkspace(notify);
+  const { items,problem,code,dirty,saving,folder,choosingFolder,loading,open,changeCode } = workspace;
+  const assistant = useAssistant(workspace,notify);
+  const { model,effort,aiBusy } = assistant;
+  const { diagnostics,busy,loads,dead,generation,run,clearLoadMessages,setAlive } = useGhci(workspace,terminalRef,model,effort);
+  const save = useCallback(async () => {
+    const target = workspace.documentRef.current.problem?.id;
+    const epoch = workspace.folderEpoch.current;
+    await workspace.save();
+    if (target && epoch === workspace.folderEpoch.current) clearLoadMessages(target);
+  },[workspace.save,clearLoadMessages]);
   const [query,setQuery] = useState('');
   const [newOpen,setNewOpen] = useState(false); const [newTitle,setNewTitle] = useState('');
   const [left,setLeft] = useState(true);
@@ -66,27 +72,9 @@ export function App() {
   const [editorTheme,setEditorTheme] = useState(loadEditorTheme);
   const [fontSettingsOpen,setFontSettingsOpen] = useState(false);
   const [mode,setMode] = useState('NORMAL'); const [cursor,setCursor] = useState([1,1]);
-  const [diagnostics,setDiagnostics] = useState<Record<string,Diagnostic>>({}); const [busy,setBusy] = useState<Record<string,boolean>>({});
-  const [loads,setLoads] = useState<Record<string,GhciLoadState>>({});
-  const loadVersions = useRef<Record<string,number>>({});
-  const loadingGhci = useRef(new Set<string>());
-  const [dead,setDead] = useState<Record<string,boolean>>({}); const [generation,setGeneration] = useState<Record<string,number>>({});
-  const [question,setQuestion] = useState('');
-  const [aiSettings,setAISettings] = useState(initialAISettings);
-  const [codexStatus,setCodexStatus] = useState<CodexStatus>({ state:'disconnected',message:'未接続',models:[] });
-  const selectedModel = codexStatus.models.find(model => model.id === aiSettings.model) || codexStatus.models.find(model => model.id === codexStatus.defaultModel) || codexStatus.models.find(model => model.isDefault) || codexStatus.models[0];
-  const model = selectedModel?.id || '';
-  const efforts = selectedModel?.supportedReasoningEfforts || [];
-  const defaultEffort = model === codexStatus.defaultModel && efforts.some(option => option.effort === codexStatus.defaultReasoningEffort) ? codexStatus.defaultReasoningEffort : selectedModel?.defaultReasoningEffort;
-  const effort = efforts.find(option => option.effort === aiSettings.effort)?.effort || efforts.find(option => option.effort === defaultEffort)?.effort || efforts[0]?.effort || '';
-  const [chatMap,setChatMap] = useState<Record<string,Message[]>>({});
-  const sendingQuestions = useRef(new Set<string>());
-  const [folder,setFolder] = useState<WorkspaceInfo|null>(null); const [choosingFolder,setChoosingFolder] = useState(false);
-  const [toast,setToast] = useState(''); const [loading,setLoading] = useState(true); const switching = useRef(false);
-  const [help,setHelp] = useState(false); const chatArea = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<TerminalHandle>(null); const questionInput = useRef<HTMLInputElement>(null); const split = useRef<HTMLDivElement>(null);
+  const [help,setHelp] = useState(false);
+  const questionInput = useRef<HTMLInputElement>(null); const split = useRef<HTMLDivElement>(null);
   const id = problem?.id || '';
-  const messages = chatMap[id] || problem?.messages || []; const aiBusy = messages.some(x => x.pending);
   const lastError = diagnostics[id];
   const loadState = loads[id];
   const [dismissedLoadStatus,setDismissedLoadStatus] = useState<GhciLoadState|null>(null);
@@ -95,18 +83,6 @@ export function App() {
     const timer = setTimeout(() => setDismissedLoadStatus(loadState),6500);
     return () => clearTimeout(timer);
   },[loadState]);
-  const notify = useCallback((error:unknown) => setToast(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /,'') : String(error)), []);
-  const connectCodex = useCallback(async () => {
-    const epoch = folderEpoch.current;
-    try { const status = await api.codexConnect(); if (epoch === folderEpoch.current) setCodexStatus(status); }
-    catch (error) { if (epoch === folderEpoch.current) { setCodexStatus(prev => ({ ...prev,state:'error',message:String(error) })); notify(error); } }
-  },[notify]);
-  useEffect(() => {
-    if (api && id && codexStatus.state === 'disconnected') void connectCodex();
-  },[id,codexStatus.state,connectCodex]);
-  useEffect(() => {
-    try { localStorage.setItem('kata-ai-settings',JSON.stringify(aiSettings)); } catch { notify('AIモデル設定を保存できませんでした。'); }
-  },[aiSettings,notify]);
   useEffect(() => {
     try { localStorage.setItem(fontSettingsKey,JSON.stringify(fontSettings)); }
     catch { notify('フォント設定を保存できませんでした。'); }
@@ -134,137 +110,11 @@ export function App() {
   useEffect(() => {
     try { localStorage.setItem('kata-ai-sidebar-open',right ? 'on' : 'off'); } catch {}
   },[right]);
-  const refresh = useCallback(async () => {
-    const epoch = folderEpoch.current;
-    const list = await api.list(); if (epoch !== folderEpoch.current) return;
-    setItems(list);
-    const current = problemRef.current;
-    if (!current || dirtyRef.current) return;
-    if (!list.some(item => item.id === current.id)) {
-      problemRef.current = null; codeRef.current = ''; setProblem(null); setCode('');
-      return;
-    }
-    const latest = await api.open(current.id);
-    if (epoch === folderEpoch.current && problemRef.current?.id === current.id && !dirtyRef.current && codeRef.current !== latest.code) {
-      problemRef.current = latest; codeRef.current = latest.code; setProblem(latest); setCode(latest.code);
-    }
-  }, []);
-  const clearLoadMessages = useCallback((target:string) => {
-    loadVersions.current[target] = (loadVersions.current[target] || 0)+1;
-    setLoads(prev => { const next = { ...prev }; delete next[target]; return next; });
-  },[]);
-  const save = useCallback(async (clearMessages = true) => {
-    const p = problemRef.current; if (!p) return;
-    if (!dirtyRef.current) { if (clearMessages) clearLoadMessages(p.id); return; }
-    const text = codeRef.current; setSaving(true);
-    try {
-      await api.save(p.id, text);
-      if (clearMessages) clearLoadMessages(p.id);
-      if (problemRef.current?.id === p.id && codeRef.current === text) { dirtyRef.current = false; setDirty(false); }
-      await refresh();
-    } finally { setSaving(false); }
-  }, [refresh,clearLoadMessages]);
-  const activate = useCallback(async (p:Problem) => {
-    problemRef.current = p; codeRef.current = p.code; dirtyRef.current = false;
-    setProblem(p); setCode(p.code); setDirty(false);
-    setQuestion(''); setChatMap(prev => ({ ...prev, [p.id]:p.messages }));
-    localStorage.setItem('kata-last',p.id);
-  }, []);
-  const confirmDiscard = useCallback(() => !dirtyRef.current || window.confirm('未保存の変更があります。保存せずに続けますか？\n保存する場合はキャンセルして、⌘S / Ctrl+S を押してください。'),[]);
-  const open = useCallback(async (next:string) => {
-    if (switching.current || next === problemRef.current?.id || !confirmDiscard()) return;
-    switching.current = true;
-    try { await activate(await api.open(next)); }
-    catch (e) { notify(e); } finally { switching.current = false; }
-  }, [activate,confirmDiscard,notify]);
-  useEffect(() => {
-    if (!api) { setLoading(false); return; }
-    const unsub = api.onEvent((event:AppEvent) => {
-      if (event.type === 'before-close') {
-        if (confirmDiscard()) api.closeReady().catch(notify);
-      }
-      if (event.type === 'workspace-changed') refresh().catch(notify);
-      if (event.type === 'ghci-diagnostic') { setDiagnostics(prev => ({ ...prev,[event.id]:event.diagnostic })); analyzeDiagnosticRef.current(event.id); }
-      if (event.type === 'ghci-exit') setDead(prev => ({ ...prev, [event.id]:true }));
-      if (event.type === 'notice') notify(event.message);
-      if (event.type === 'codex-status') setCodexStatus(event.status);
-      if (event.type === 'ai-messages') setChatMap(prev => ({ ...prev, [event.id]:event.messages }));
-      if (event.type === 'ai-message') setChatMap(prev => {
-        const list = prev[event.id] || [];
-        return { ...prev, [event.id]:list.some(m => m.id === event.message.id) ? list.map(m => m.id === event.message.id ? event.message : m) : [...list,event.message] };
-      });
-    });
-    let disposed = false;
-    (async () => {
-      try {
-        const [list,info] = await Promise.all([api.list(),api.workspaceInfo()]); if (disposed) return; setItems(list); setFolder(info);
-        if (info.warning) notify(info.warning);
-        const last = localStorage.getItem('kata-last'); const selected = list.find(x => x.id === last) || list[0];
-        if (selected) await activate(await api.open(selected.id));
-        if (!disposed) setCodexStatus(await api.codexStatus());
-      } catch (e) { if (!disposed) notify(e); } finally { if (!disposed) setLoading(false); }
-    })();
-    return () => { disposed = true; unsub(); };
-  }, [activate,notify,refresh,confirmDiscard]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''),6500); return () => clearTimeout(t); }, [toast]);
-  useEffect(() => {
-    if (chatArea.current) chatArea.current.scrollTop = chatArea.current.scrollHeight;
-  },[messages.at(-1)?.text,id]);
-  useEffect(() => {
-    const area = chatArea.current;
-    if (!area) return;
-    const observer = new ResizeObserver(() => { area.scrollTop = area.scrollHeight; });
-    observer.observe(area); return () => observer.disconnect();
-  },[id]);
   const focusGhci = useCallback(() => {
     setRight(false);
     requestAnimationFrame(() => terminalRef.current?.focus());
   },[]);
-  const analyzeDiagnosticRef = useRef<(target:string)=>void>(() => {});
-  const run = useCallback(async (restartSession = false, diagnosticId?:string) => {
-    const p = diagnosticId ? items.find(item => item.id === diagnosticId) : problemRef.current;
-    if (!p || loadingGhci.current.has(p.id)) return;
-    const epoch = folderEpoch.current;
-    const source = p.id === problemRef.current?.id ? codeRef.current : '';
-    const version = (loadVersions.current[p.id] || 0)+1;
-    loadVersions.current[p.id] = version;
-    loadingGhci.current.add(p.id);
-    const update = (state:GhciLoadState) => {
-      if (epoch === folderEpoch.current && loadVersions.current[p.id] === version) setLoads(prev => ({ ...prev,[p.id]:state }));
-    };
-    update({ source,phase:diagnosticId ? 'analyzing' : 'loading' });
-    setBusy(prev => ({ ...prev,[p.id]:true }));
-    let report:GhciReport|undefined;
-    try {
-      if (diagnosticId) report = await api.ghciDiagnosticReport(p.id);
-      else {
-        await save(false);
-        if (epoch !== folderEpoch.current || problemRef.current?.id !== p.id || codeRef.current !== source) {
-          update({ source,phase:'error',note:'コードが変更されました。もう一度読み込んでください。' }); return;
-        }
-        if (restartSession) {
-          await api.ghciStop(p.id);
-          setGeneration(prev => ({ ...prev,[p.id]:(prev[p.id] || 0)+1 }));
-        }
-        const size = terminalRef.current?.dimensions();
-        report = await api.ghciLoad(p.id,size?.cols,size?.rows);
-      }
-      if (epoch !== folderEpoch.current) return;
-      const errors = report.diagnostics.some(d => d.severity === 'error');
-      if (report.success) setDiagnostics(prev => { const next = { ...prev }; delete next[p.id]; return next; });
-      update({ source:report.source,phase:errors ? 'analyzing' : 'done',report });
-      if (errors) {
-        report = await api.ghciExplain(p.id,report.token,model,effort);
-        update({ source:report.source,phase:'done',report });
-      }
-    } catch (error) {
-      update({ source:report?.source ?? source,phase:'error',report,note:`${report ? 'AI解析に失敗しました。GHCiの出力はターミナルで確認できます。' : ''}${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      loadingGhci.current.delete(p.id);
-      if (epoch === folderEpoch.current) setBusy(prev => ({ ...prev,[p.id]:false }));
-    }
-  },[save,model,effort,items]);
-  analyzeDiagnosticRef.current = target => { void run(false,target); };
   useEffect(() => {
     const loadKey = (event:KeyboardEvent) => {
       if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.altKey || event.isComposing || document.querySelector('dialog[open],.modal-backdrop')) return;
@@ -296,35 +146,13 @@ export function App() {
     window.addEventListener('keydown',handler); return () => window.removeEventListener('keydown',handler);
   }, [save,run,notify,focusGhci]);
   async function create() {
-    if (switching.current || !confirmDiscard()) return; switching.current = true;
-    try { const p = await api.create(newTitle.trim() || 'Untitled.hs'); setNewOpen(false); setNewTitle(''); await refresh(); await activate(p); }
-    catch (e) { notify(e); } finally { switching.current = false; }
-  }
-  async function sendQuestion(text = question, context = '') {
-    if (!text.trim() || !id || aiBusy || sendingQuestions.current.has(id)) return;
-    const target = id; sendingQuestions.current.add(target); setQuestion('');
-    try { await api.ask(target,text,context,model,effort,codeRef.current); }
-    catch (e) { notify(e); }
-    finally { sendingQuestions.current.delete(target); }
+    if (await workspace.create(newTitle)) { setNewOpen(false); setNewTitle(''); }
   }
   usePaneNavigation(() => { if (lastError) void run(false,id); },ghciSide,pane => {
     setRight(pane === 'assistant');
   });
   async function chooseFolder() {
-    if (switching.current || !confirmDiscard()) return;
-    switching.current = true; setChoosingFolder(true);
-    try {
-      const info = await api.chooseFolder(); if (!info) return;
-      folderEpoch.current++;
-      setLoads({});
-      problemRef.current = null; codeRef.current = ''; dirtyRef.current = false;
-      setProblem(null); setCode(''); setDirty(false); setFolder(info); setQuery('');
-      setDiagnostics({}); setBusy({}); setDead({}); setGeneration({}); setChatMap({}); setQuestion('');
-      setCodexStatus(await api.codexStatus());
-      const list = await api.list(); setItems(list);
-      if (list[0]) await activate(await api.open(list[0].id));
-    } catch (e) { notify(e); }
-    finally { switching.current = false; setChoosingFolder(false); }
+    if (await workspace.chooseFolder()) setQuery('');
   }
   function resize(e:React.PointerEvent) {
     e.preventDefault(); const element = split.current; if (!element) return;
@@ -352,8 +180,8 @@ export function App() {
       <main className="main-workspace">
         {problem ? <>
         <div ref={split} className={`split-workspace ${ghciSide ? 'ghci-at-side' : ''}`}>
-          <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button className="load-button" aria-label="GHCiで読込" title="保存してGHCiで読込・エラーをAI解析 (⌘Enter)" disabled={loadingGhci.current.has(id)} onClick={() => void run()}>{loadingGhci.current.has(id) ? <Loader2 size={12} className="spin"/> : <CheckCheck size={12}/>}<span>GHCi読込</span><kbd>⌘ ↵</kbd></button><span className="tool-divider"/><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
-          <Editor id={id} code={code} diagnostics={loadState?.report?.diagnostics || noInlineDiagnostics} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={text => { codeRef.current = text; dirtyRef.current = true; setCode(text); setDirty(true); }} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
+          <section className="editor-panel"><div className="editor-tabs"><div className="editor-tab"><Logo small/><span>{problem.fileName}</span>{dirty ? <span className="dirty-dot"/> : <span className="tab-saved"><Check size={12}/></span>}</div><div className="editor-tools"><button className="load-button" aria-label="GHCiで読込" title="保存してGHCiで読込・エラーをAI解析 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id] ? <Loader2 size={12} className="spin"/> : <CheckCheck size={12}/>}<span>GHCi読込</span><kbd>⌘ ↵</kbd></button><span className="tool-divider"/><button title="Finderでファイルを表示" className="icon-button" onClick={() => api.reveal(id).catch(notify)}><FolderOpen size={14}/></button><span className="tool-divider"/><button className={`vim-toggle ${vimEnabled?'on':''}`} onClick={() => { setVimEnabled(!vimEnabled); localStorage.setItem('kata-vim',vimEnabled?'off':'on'); }} title="Vimキーバインドを切り替え">vim <span>{vimEnabled?'ON':'OFF'}</span></button><span className="tool-divider"/><button title="保存 (⌘S / :w)" className="icon-button" onClick={() => save().catch(notify)}><Save size={14}/></button></div></div>
+          <Editor id={id} code={code} diagnostics={loadState?.report?.diagnostics || noInlineDiagnostics} vimEnabled={vimEnabled} fontSettings={fontSettings} theme={editorTheme} onChange={changeCode} onSave={() => save().catch(notify)} onRun={() => void run()} onMode={setMode} onCursor={(line,col) => setCursor([line,col])}/>
           </section>
           {!ghciSide && <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>}
           {ghciSide && <SidebarResizer side="right" controls="ghci-panel" label="GHCiの幅を調整" width={ghciWidth} min={220} max={ghciMax} onResize={setPreferredGhciWidth}/>}
@@ -361,35 +189,14 @@ export function App() {
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
               <div className="ghci-tools"><button className="icon-button" aria-label={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} title={ghciSide ? 'GHCiをエディタの下に移動' : 'GHCiをエディタの右に移動'} onClick={() => setGhciSide(!ghciSide)}>{ghciSide ? <PanelBottom size={14}/> : <PanelRight size={14}/>}</button>{lastError && <button className="ask-error-button" aria-label="GHCiのエラーを解析" title="GHCiのエラーを裏でAI解析 (Ctrl-J → e)" disabled={busy[id]} onClick={() => void run(false,id)}><Sparkles size={12}/><span>エラーを解析</span></button>}<button className="run-button" title="GHCiを起動して読込／再読込・エラーをAI解析 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>{dead[id] === false ? '再読込' : '読込'}</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void run(true)}><RotateCcw size={13}/></button></div>
             </div>
-            <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
+            <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setAlive(id,alive)}/>
           </section>
         </div></> : <div className="workspace-empty"><Logo/><h2>{loading?'ワークスペースを読み込み中…':'.hs ファイルを選択するか、新しく作成してください。'}</h2><button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/>新しいファイル</button></div>}
       </main>
       {!right && <button className="assistant-launcher" title="AIアシスタントを開く" aria-label="AIサイドバーを開く" aria-expanded={false} aria-controls="assistant-panel" onClick={() => { setRight(true); requestAnimationFrame(() => questionInput.current?.focus()); }}><Sparkles size={14}/><span>AIアシスタント</span>{aiBusy && <Loader2 size={12} className="spin"/>}</button>}
       <div className="assistant-overlay" style={{ width:assistantWidth }} hidden={!right}>
         <SidebarResizer side="right" controls="assistant-panel" label="AIアシスタントの幅を調整" className="assistant-resizer" width={assistantWidth} min={280} max={rightMax} onResize={width => setPreferredWidths(prev => ({ ...prev,right:width }))}/>
-        <aside id="assistant-panel" className="ai-sidebar" aria-label="AIアシスタント">
-        <div className="lower-header ai-sidebar-heading"><h2 id="assistant-heading"><Sparkles size={13}/>AIアシスタント{aiBusy && <Loader2 size={12} className="spin"/>}</h2><button className="icon-button" aria-label="AIサイドバーを閉じる" title="AIアシスタントを閉じる (Esc)" aria-expanded={right} aria-controls="ai-sidebar-content" onClick={() => { setRight(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.cm-content')?.focus()); }}><X size={15}/></button></div>
-        <div id="ai-sidebar-content" className="ai-sidebar-content" aria-labelledby="assistant-heading" hidden={!right}>
-          <div className="ai-settings-row">
-              <div className="ai-model-settings">
-                <select aria-label="Codexモデル" title="AIモデル" value={model} disabled={aiBusy || codexStatus.state === 'connecting' || !codexStatus.models.length} onChange={e => {
-                  const next = codexStatus.models.find(option => option.id === e.target.value);
-                  setAISettings({ model:e.target.value,effort:next?.defaultReasoningEffort || '' });
-                }}>{!codexStatus.models.length && <option value="">{codexStatus.state === 'connecting' ? 'モデルを読込中…' : 'デフォルト'}</option>}{codexStatus.models.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
-                <select aria-label="推論レベル" title="推論レベル" value={effort} disabled={aiBusy || codexStatus.state === 'connecting' || !efforts.length} onChange={e => setAISettings({ model,effort:e.target.value })}>{!efforts.length && <option value="">推論: デフォルト</option>}{efforts.map(option => <option key={option.effort} value={option.effort} title={option.description}>推論: {option.effort}</option>)}</select>
-                {(codexStatus.state === 'error' || (codexStatus.state === 'connected' && !codexStatus.authenticated)) && <button className="icon-button" aria-label="Codexに再接続" title={codexStatus.message} onClick={() => void connectCodex()}><RotateCcw size={13}/></button>}
-              </div>
-            </div>
-              <div ref={chatArea} className="chat-area" role="log" aria-label="チャット履歴" aria-live="polite"><div className="messages">{messages.map(m => <div key={m.id} className={`message ${m.role}`}><div className="message-author"><span>{m.role === 'assistant' ? 'Codex' : 'You'}</span><time>{time(m.at)}</time></div><div className="markdown">{m.pending && !m.text ? <Loader2 size={14} className="spin" aria-label="応答中"/> : <ReactMarkdown>{m.text}</ReactMarkdown>}{m.pending && m.text && <span className="stream-cursor"/>}</div></div>)}</div></div>
-              <div className="composer-area">
-                <form className="composer" onSubmit={e => { e.preventDefault(); void sendQuestion(); }}>
-                  <input ref={questionInput} aria-label="AIへの質問" value={question} placeholder="質問を入力…" disabled={!problem} maxLength={50000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.keyCode === 229)) e.preventDefault(); }}/>
-                  {aiBusy ? <button type="button" className="send-button stop" aria-label="応答を停止" onClick={() => api.stopAI(id).catch(notify)}><Square size={12} fill="currentColor"/></button> : <button className="send-button" type="submit" aria-label="送信" disabled={!question.trim() || !problem}><ArrowUp size={16}/></button>}
-                </form>
-              </div>
-        </div>
-        </aside>
+        <AssistantPanel assistant={assistant} id={id} open={right} onClose={() => setRight(false)} questionInput={questionInput} onError={notify}/>
       </div>
       </div>
     </div>

@@ -282,6 +282,32 @@ app.on('browser-window-created', (_,win) => {
       await evaluate(`document.querySelector('.cm-content').focus()`);
       loadKey();
       await until(`!document.querySelector('.ghci-status-popup') && !document.querySelector('.load-button').disabled && document.querySelector('.run-button').textContent.includes('再読込') && document.querySelector('.run-button').textContent.includes('再読込')`);
+      // Exercise folder lifecycle through the UI without opening a native dialog.
+      const { dialog } = require('electron');
+      const originalDialog = dialog.showOpenDialog;
+      try {
+        dialog.showOpenDialog = async () => ({ canceled:true,filePaths:[] });
+        await evaluate(`document.querySelector('[aria-label="フォルダー設定"]').click()`);
+        await until(`!document.querySelector('[aria-label="フォルダー設定"]').disabled`);
+        assert.equal(await evaluate(`document.querySelector('.problem-item[aria-current="page"]').dataset.problemId`),problem.id);
+        dialog.showOpenDialog = async () => ({ canceled:false,filePaths:[process.env.KATA_WORKSPACE] });
+        await evaluate(`document.querySelector('[aria-label="フォルダー設定"]').click()`);
+        await until(`!document.querySelector('[aria-label="フォルダー設定"]').disabled`);
+        assert.ok((await evaluate(`window.kata.ghciSnapshot(${JSON.stringify(problem.id)})`)).alive,'selecting the same folder preserves GHCi');
+        const nextFolder = path.join(fs.realpathSync(temporary),'next-workspace');
+        fs.mkdirSync(nextFolder);
+        const nextId = path.join(nextFolder,'Solution.hs');
+        fs.writeFileSync(nextId,'module Solution where\nvalue = 42\n');
+        dialog.showOpenDialog = async () => ({ canceled:false,filePaths:[nextFolder] });
+        await evaluate(`document.querySelector('[aria-label="フォルダー設定"]').click()`);
+        await until(`!document.querySelector('[aria-label="フォルダー設定"]').disabled && document.querySelector('.problem-item[aria-current="page"]')?.dataset.problemId === ${JSON.stringify(nextId)}`);
+        assert.equal(await evaluate(`window.kata.ghciSnapshot(${JSON.stringify(nextId)})`),null,'the new folder does not inherit old GHCi sessions');
+        assert.equal(await evaluate(`document.querySelectorAll('.message').length`),0,'the new folder starts with its own chat');
+        assert.equal(await evaluate(`document.querySelectorAll('.cm-inline-diagnostic').length`),0,'the new folder starts without old diagnostics');
+        await evaluate(`document.querySelector('.cm-content').focus()`); loadKey();
+        await until(`!document.querySelector('.load-button').disabled && document.querySelector('.run-button').textContent.includes('再読込')`);
+        assert.equal((await evaluate(`window.kata.workspaceInfo()`)).path,nextFolder);
+      } finally { dialog.showOpenDialog = originalDialog; }
       // Let native PTY exit handlers finish before Electron tears down Node.
       await evaluate(`(async () => {
         const snapshots = await Promise.all((await window.kata.list()).map(async item => ({ id:item.id,snapshot:await window.kata.ghciSnapshot(item.id) })));

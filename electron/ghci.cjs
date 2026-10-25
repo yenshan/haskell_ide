@@ -18,6 +18,7 @@ class Ghci {
   snapshot(session) { return { data:session.history, seq:session.seq, cols:session.cols, rows:session.rows, alive:!session.closed }; }
   peek(id) { const session = this.sessions.get(id); return session ? this.snapshot(session) : null; }
   start(id,file,cols=80,rows=24) {
+    if (this.closed) throw new Error('GHCiワークスペースを終了しています。');
     let session = this.sessions.get(id);
     if (session) {
       this.sessions.delete(id); this.sessions.set(id,session);
@@ -130,6 +131,6 @@ class Ghci {
     await session.ended; clearTimeout(force);
   }
   async restart(id,file) { await this.stop(id); return this.start(id,file); }
-  async close() { await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); }
+  async close() { this.closed = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); }
 }
 module.exports = { Ghci, diagnosticText, hasDiagnostic };

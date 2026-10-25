@@ -11,6 +11,7 @@ class Codex {
   }
   setStatus(patch) { this.status = { ...this.status, ...patch }; this.emit({ type:'codex-status', status:this.status }); }
   async connect() {
+    if (this.closed) throw new Error('Codexワークスペースを終了しています。');
     if (this.connecting) return this.connecting;
     if (this.proc && this.status.state === 'connected' && this.status.authenticated) return this.status;
     if (this.proc && !this.status.authenticated) { const old = this.proc; this.proc = null; old.kill(); }
@@ -211,6 +212,6 @@ class Codex {
     const item = this.store.find(id); const active = this.active.get(item.threadId);
     if (active?.turnId) await this.rpc('turn/interrupt', { threadId:item.threadId, turnId:active.turnId });
   }
-  close() { this.proc?.kill(); }
+  close() { this.closed = true; this.proc?.kill(); }
 }
 module.exports = { Codex };

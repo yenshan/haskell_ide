@@ -410,3 +410,62 @@ test('AI source ranges validate exact fragments, Unicode columns and ambiguous l
   ]) assert.deepEqual(diagnosticRange(source,d),empty);
   assert.deepEqual(diagnosticRange(source,{ displayLine:2,startColumn:7,endColumn:9,targetText:'foo' }),{ startColumn:7,endColumn:9,targetText:'foo' },'a valid range disambiguates repeated source text');
 });
+
+test('workspace services silence retired events and await processes and pending writes exactly once', async () => {
+  const { EventEmitter } = require('node:events');
+  const { WorkspaceServices } = require('../electron/workspace-services.cjs');
+  let finishGhci, finishWrites, watchCallback, watcherClosed = 0, ghciClosed = 0, codexClosed = 0;
+  const store = { root:'/test',writes:new Promise(resolve => { finishWrites = resolve; }) };
+  const watcher = new EventEmitter(); watcher.close = () => { watcherClosed++; };
+  const proc = new EventEmitter(); proc.exitCode = null; proc.signalCode = null;
+  const events = [];
+  class FakeGhci {
+    constructor(emit) { this.emit = emit; }
+    close() {
+      ghciClosed++; this.emit({ type:'ghci-exit',id:'old' });
+      return new Promise(resolve => { finishGhci = resolve; });
+    }
+  }
+  class FakeCodex {
+    constructor(_,emit) { this.emit = emit; this.proc = proc; }
+    close() { codexClosed++; this.emit({ type:'codex-status',status:{ state:'error' } }); }
+  }
+  class FakeDiagnostics { close() { this.closed = true; } }
+  const services = new WorkspaceServices(store,event => events.push(event),{
+    Ghci:FakeGhci,Codex:FakeCodex,GhciDiagnostics:FakeDiagnostics,
+    watch:(_,callback) => { watchCallback = callback; return watcher; }
+  });
+  services.ghci.emit({ type:'ghci-data',id:'old' });
+  watchCallback('change','Solution.hs'); // Pending debounce must also be canceled.
+  let closed = false;
+  const closing = services.close(); closing.then(() => { closed = true; });
+  assert.equal(services.close(),closing,'closing is idempotent');
+  assert.equal(services.diagnostics.closed,true);
+  services.ghci.emit({ type:'ghci-diagnostic',id:'old' });
+  watcher.emit('error',new Error('late watcher error'));
+  watchCallback('change','Solution.hs');
+  await new Promise(resolve => setTimeout(resolve,220));
+  assert.deepEqual(events,[{ type:'ghci-data',id:'old' }],'no event escapes from retired services');
+  finishGhci(); finishWrites(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closed,false,'Codex exit must be awaited too');
+  proc.emit('exit',0);
+  await closing;
+  assert.equal(closed,true);
+  assert.deepEqual([watcherClosed,ghciClosed,codexClosed],[1,1,1]);
+});
+
+test('retired services cannot spawn processes from delayed load or connection requests', async () => {
+  const ghci = new Ghci(() => {});
+  let finishRead;
+  const store = { open:() => new Promise(resolve => { finishRead = resolve; }),file:() => '/unused.hs' };
+  const diagnostics = new GhciDiagnostics(store,ghci);
+  const pending = diagnostics.load('file',80,24);
+  await ghci.close();
+  finishRead({ code:'module Solution where' });
+  await assert.rejects(pending,/終了しています/);
+  assert.equal(ghci.sessions.size,0);
+  const codex = new Codex({},() => {});
+  codex.close();
+  await assert.rejects(codex.connect(),/終了しています/);
+  assert.equal(codex.proc,undefined);
+});
