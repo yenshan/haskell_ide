@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type } from 'lucide-react';
+import { Plus, Search, ChevronDown, ArrowUp, Check, Circle, Command, FolderOpen, Loader2, PanelLeftClose, PanelLeftOpen, Play, RotateCcw, Save, Sparkles, Square, Terminal, X, CheckCheck, Type } from 'lucide-react';
 import { Editor } from './Editor';
 import { GhciTerminal, type TerminalHandle } from './GhciTerminal';
 import { SidebarResizer } from './SidebarResizer';
@@ -253,16 +253,18 @@ export function App() {
   const filtered = items.filter(x => x.fileName.toLowerCase().includes(query.toLowerCase()));
   if (!api) return <div className="browser-notice"><Logo/><h1>Kata</h1><p>このアプリはElectronで起動してください。</p><code>npm run dev</code></div>;
   return <div className="app">
-    <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="フォント設定" aria-label="フォント設定" className="icon-button" onClick={() => setFontSettingsOpen(true)}><Type size={16}/></button><button title="左サイドバー" className="icon-button" onClick={() => setLeft(!left)}><PanelLeftClose size={15}/></button></div></header>
+    <header className="titlebar"><div className="titlebar-brand"><Logo small/><span>kata</span><span className="brand-separator">/</span><span className="workspace-label">Haskell workspace</span></div><div className="titlebar-right"><span className="local-indicator"/>Local workspace<span className="titlebar-divider"/><button title="フォント設定" aria-label="フォント設定" className="icon-button" onClick={() => setFontSettingsOpen(true)}><Type size={16}/></button></div></header>
     <div className="layout" ref={layoutRef}>
-      {left && <aside className="sidebar" id="file-sidebar" style={{ width:sidebarWidth }}>
-        <div className="sidebar-heading"><span>FILES</span><span className="count-pill">{items.length}</span></div>
+      <aside className={`sidebar ${left ? '' : 'collapsed'}`} id="file-sidebar" aria-label="ファイルサイドバー" style={{ width:left ? sidebarWidth : 42 }}>
+        <div className="sidebar-heading"><span hidden={!left}>FILES</span><button className="icon-button" title={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-label={left ? 'サイドバーを閉じる' : 'サイドバーを開く'} aria-expanded={left} aria-controls="file-sidebar-content" onClick={() => setLeft(!left)}>{left ? <PanelLeftClose size={15}/> : <PanelLeftOpen size={15}/>}</button></div>
+        <div className="sidebar-content" id="file-sidebar-content" hidden={!left}>
         <button className="folder-setting" aria-label="フォルダー設定" title={folder?.path || 'フォルダーを選択'} disabled={choosingFolder} onClick={() => void chooseFolder()}>{choosingFolder?<Loader2 className="spin" size={15}/>:<FolderOpen size={15}/>}<span><strong>{folder?.name || 'フォルダーを設定'}</strong><small>{folder?.path || '.hs ファイルの保存先を選択'}</small></span><ChevronDown size={12}/></button>
         <button className="new-button" onClick={() => setNewOpen(true)}><Plus size={16}/><span>新しいファイル</span><kbd>⌘ N</kbd></button>
         <label className="search-box"><Search size={14}/><input aria-label="ファイルを検索" placeholder="ファイルを検索…" value={query} onChange={e => setQuery(e.target.value)}/>{query && <button className="icon-button" aria-label="検索をクリア" onClick={() => setQuery('')}><X size={12}/></button>}</label>
         <div className="problem-list">{filtered.map(item => <button key={item.id} title={item.fileName} data-problem-id={item.id} aria-current={item.id===id?'page':undefined} onClick={() => void open(item.id)} className={`problem-item ${item.id===id?'selected':''}`}><span className="file-name">{item.fileName}</span><time className="file-date" dateTime={item.updatedAt} title="更新日">{fileDate(item.updatedAt)}</time></button>)}{!filtered.length && <div className="list-empty">ファイルが見つかりません</div>}</div>
         <div className="sidebar-bottom"><button className="sidebar-help" onClick={() => setHelp(true)}><Command size={14}/><span>キーボードショートカット</span><kbd>⌘ /</kbd></button></div>
-      </aside>}
+        </div>
+      </aside>
       {left && <SidebarResizer side="left" controls="file-sidebar" width={sidebarWidth} min={180} max={leftMax} onResize={setPreferredWidth}/>}
       <main className="main-workspace">
         {problem ? <>
