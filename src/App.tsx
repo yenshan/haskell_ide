@@ -58,6 +58,7 @@ export function App() {
   const defaultEffort = model === codexStatus.defaultModel && efforts.some(option => option.effort === codexStatus.defaultReasoningEffort) ? codexStatus.defaultReasoningEffort : selectedModel?.defaultReasoningEffort;
   const effort = efforts.find(option => option.effort === aiSettings.effort)?.effort || efforts.find(option => option.effort === defaultEffort)?.effort || efforts[0]?.effort || '';
   const [chatMap,setChatMap] = useState<Record<string,Message[]>>({});
+  const sendingQuestions = useRef(new Set<string>());
   const [folder,setFolder] = useState<WorkspaceInfo|null>(null); const [choosingFolder,setChoosingFolder] = useState(false);
   const [toast,setToast] = useState(''); const [loading,setLoading] = useState(true); const switching = useRef(false);
   const [help,setHelp] = useState(false); const chatArea = useRef<HTMLDivElement>(null);
@@ -208,17 +209,19 @@ export function App() {
     try { while (dirtyRef.current) await save(); const p = await api.create(newTitle.trim() || 'Untitled.hs'); setNewOpen(false); setNewTitle(''); await refresh(); await activate(p); }
     catch (e) { notify(e); } finally { switching.current = false; }
   }
-  async function sendQuestion(text = question) {
-    if (!text.trim() || !id || aiBusy) return;
-    const target = id, context = attachedOutput; setQuestion(''); setAttachedOutput('');
+  async function sendQuestion(text = question, context = attachedOutput) {
+    if (!text.trim() || !id || aiBusy || sendingQuestions.current.has(id)) return;
+    const target = id; sendingQuestions.current.add(target); setQuestion(''); setAttachedOutput('');
     try { await save(); await api.ask(target,text,context,model,effort); }
     catch (e) { notify(e); }
+    finally { sendingQuestions.current.delete(target); }
   }
   function askOutput(error?:Diagnostic) {
     const capture = error ? { text:error.output,selected:false } : terminalRef.current?.capture();
     if (!capture?.text.trim()) { notify('送信する端末出力がありません。'); return; }
-    setAttachedOutput(capture.text);
-    setQuestion(error?'このGHCiのエラーの原因と、修正のヒントを教えてください。':capture.selected?'選択したGHCiの出力について教えてください。':'直近のGHCiの出力について教えてください。');
+    const prompt = error?'このGHCiのエラーの原因と、修正のヒントを教えてください。':capture.selected?'選択したGHCiの出力について教えてください。':'直近のGHCiの出力について教えてください。';
+    if (error) { setAttachedOutput(capture.text); setQuestion(prompt); }
+    else void sendQuestion(prompt,capture.text);
     setTimeout(() => questionInput.current?.focus(),0);
   }
   async function restart() {
@@ -277,7 +280,7 @@ export function App() {
           <div className="split-handle" role="separator" aria-label="エディタと下部パネルの高さを調整" aria-orientation="horizontal" aria-valuemin={25} aria-valuemax={78} aria-valuenow={60} tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (!['ArrowUp','ArrowDown'].includes(e.key)) return; e.preventDefault(); const el=split.current; if (el) el.style.setProperty('--editor-height', `${Math.max(25,Math.min(78,parseFloat(el.style.getPropertyValue('--editor-height') || '60')+(e.key==='ArrowDown'?3:-3)))}%`); }}><span/></div>
           <LowerSplit ghci={<section id="ghci-panel" className="lower-pane" aria-labelledby="ghci-heading">
             <div className="lower-header"><h2 id="ghci-heading"><Terminal size={13}/>GHCi</h2>
-              <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに聞く" title="エラーをAIに聞く" onClick={() => askOutput(lastError)}><Sparkles size={12}/><span>エラーをAIに聞く</span></button>}<button className="ask-output-button" aria-label="出力をAIに相談" title="選択範囲、未選択なら直近の端末出力を質問に添付" onClick={() => askOutput()}><Sparkles size={12}/><span>出力をAIに相談</span></button><button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
+              <div className="ghci-tools">{lastError && <button className="ask-error-button" aria-label="エラーをAIに聞く" title="エラーをAIに聞く" onClick={() => askOutput(lastError)}><Sparkles size={12}/><span>エラーをAIに聞く</span></button>}<button className="ask-output-button" aria-label="出力をAIに相談" title="選択範囲、未選択なら直近の端末出力をAIに送信" disabled={aiBusy} onClick={() => askOutput()}><Sparkles size={12}/><span>出力をAIに相談</span></button><button className="run-button" title="保存してGHCiを再読込 (⌘Enter)" disabled={busy[id]} onClick={() => void run()}>{busy[id]?<Loader2 className="spin" size={12}/>:<Play size={11} fill="currentColor"/>}<span>再読込</span><kbd>⌘ ↵</kbd></button><button title="GHCiを再起動" className="icon-button" disabled={busy[id]} onClick={() => void restart()}><RotateCcw size={13}/></button></div>
             </div>
             <GhciTerminal ref={terminalRef} id={id} generation={generation[id] || 0} onError={notify} onState={alive => setDead(prev => ({ ...prev,[id]:!alive }))}/>
           </section>} assistant={<section id="assistant-panel" className="lower-pane" aria-labelledby="assistant-heading">
