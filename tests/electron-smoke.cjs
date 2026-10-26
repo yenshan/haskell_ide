@@ -149,6 +149,11 @@ app.on('browser-window-created', (_,win) => {
       assert.ok(await evaluate(`document.querySelector('.assistant-overlay').hidden`));
       assert.equal(await evaluate(`document.querySelector('.ask-error-button').textContent`),'エラーを解析');
       assert.ok(await evaluate(`!document.querySelector('.cm-inline-diagnostic')`),'interactive errors are not assigned to an invented source line');
+      const interactiveExplanation = await evaluate(`document.querySelector('.ghci-status-popup p').textContent`);
+      await pause(7000);
+      assert.equal(await evaluate(`document.querySelector('.ghci-status-popup p')?.textContent`),interactiveExplanation,'interactive error explanations remain after the former auto-dismiss timeout');
+      await evaluate(`document.querySelector('[aria-label="GHCiの通知を閉じる"]').click()`);
+      await until(`!document.querySelector('.ghci-status-popup')`);
       for (const [selector,held] of [['.xterm-helper-textarea',false],['.cm-content',true]]) {
         await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
         consultError(held); consultError(held);

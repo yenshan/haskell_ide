@@ -79,7 +79,10 @@ export function App() {
   const loadState = loads[id];
   const [dismissedLoadStatus,setDismissedLoadStatus] = useState<GhciLoadState|null>(null);
   useEffect(() => {
-    if (!loadState || !['done','error'].includes(loadState.phase)) return;
+    if (!loadState || loadState.phase !== 'done') return;
+    const report = loadState.report;
+    // Keep messages that cannot be read again as inline explanations until dismissed.
+    if (!report || (!report.success && (!report.diagnostics.length || report.diagnostics.some(d => (d.displayLine ?? d.line) <= 0 || !d.explanation)))) return;
     const timer = setTimeout(() => setDismissedLoadStatus(loadState),6500);
     return () => clearTimeout(timer);
   },[loadState]);
