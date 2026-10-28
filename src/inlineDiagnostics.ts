@@ -13,7 +13,7 @@ class ErrorExplanation extends WidgetType {
     const note = document.createElement('span');
     note.className = 'cm-inline-diagnostic';
     note.setAttribute('role','note'); note.tabIndex = 0;
-    note.textContent = this.diagnostics.map(d => `AI: ${d.explanation}`).join('\n');
+    note.textContent = this.diagnostics.map(d => `${this.diagnostics.length > 1 && d.targetText ? `「${d.targetText}」: ` : ''}${d.explanation}`).join('\n\n');
     note.title = this.diagnostics.map(d => `${d.explanation || ''}\nGHCi (${d.line}:${d.column}): ${d.message}`).join('\n\n');
     note.setAttribute('aria-label',note.title);
     anchor.append(note);
@@ -40,7 +40,7 @@ export const inlineDiagnostics = StateField.define<DecorationSet>({
     }
     for (const effect of transaction.effects) {
       if (!effect.is(setInlineDiagnostics)) continue;
-      const grouped = new Map<number,InlineDiagnostic[]>();
+      const grouped = new Map<number,{ anchor:number; diagnostics:InlineDiagnostic[] }>();
       const ranges = [];
       const underlined = new Set<string>();
       for (const d of effect.value) {
@@ -60,9 +60,13 @@ export const inlineDiagnostics = StateField.define<DecorationSet>({
             ranges.push(Decoration.mark({ class:'cm-ai-error-range',attributes:{ title:d.explanation || d.message } }).range(from,to));
           }
         }
-        grouped.set(anchor,[...(grouped.get(anchor) || []),d]);
+        const group = grouped.get(line);
+        if (group) {
+          group.anchor = Math.min(group.anchor,anchor);
+          group.diagnostics.push(d);
+        } else grouped.set(line,{ anchor,diagnostics:[d] });
       }
-      for (const [anchor,diagnostics] of grouped) ranges.push(Decoration.widget({ widget:new ErrorExplanation(diagnostics),side:-1 }).range(anchor));
+      for (const { anchor,diagnostics } of grouped.values()) ranges.push(Decoration.widget({ widget:new ErrorExplanation(diagnostics),side:-1 }).range(anchor));
       value = Decoration.set(ranges,true);
     }
     return value;

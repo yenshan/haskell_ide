@@ -224,7 +224,7 @@ app.on('browser-window-created', (_,win) => {
       await until(`!document.querySelector('.ghci-status-popup') && !document.querySelector('.load-button').disabled && document.querySelector('.run-button').textContent.includes('再読込')`);
       assert.ok(await evaluate(`!document.querySelector('.cm-inline-diagnostic')`));
       await editSource(invalidSource); loadKey();
-      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.includes('AI: Int型')`);
+      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.startsWith('Int型')`);
       assert.match(await evaluate(`(() => { const line=document.querySelector('.cm-inline-diagnostic').closest('.cm-line').cloneNode(true); line.querySelectorAll('.cm-inline-diagnostic-anchor').forEach(note => note.remove()); return line.textContent; })()`),/value :: Int/,'AI explanation uses displayLine 2 instead of GHCi line 3');
       assert.equal(await evaluate(`document.querySelector('.cm-ai-error-range').textContent`),'Int','underline only the AI-selected source fragment');
       assert.ok(await evaluate(`getComputedStyle(document.querySelector('.cm-ai-error-range')).textDecorationLine.includes('underline')`),'the selected fragment has a visible underline');
@@ -258,11 +258,11 @@ app.on('browser-window-created', (_,win) => {
       assert.ok(await evaluate(`!document.querySelector('.cm-ai-error-range')`),'saving also clears the underline');
       // Saving an unchanged document also clears explanations.
       loadKey();
-      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.includes('AI: Int型')`);
+      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.startsWith('Int型')`);
       key('S',[process.platform === 'darwin' ? 'meta' : 'control']);
       await until(`!document.querySelector('.cm-inline-diagnostic')`);
       loadKey();
-      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.includes('AI: Int型')`);
+      await until(`document.querySelector('.cm-inline-diagnostic')?.textContent.startsWith('Int型')`);
       await editSource(validSource);
       assert.ok(await evaluate(`Boolean(document.querySelector('.cm-inline-diagnostic'))`),'replacing source keeps the explanation until reload');
       loadKey();
