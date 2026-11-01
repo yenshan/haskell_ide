@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -8,6 +8,7 @@ export type TerminalHandle = { focus:()=>void; dimensions:()=>{ cols:number; row
 type Props = { id:string; generation:number; onError:(error:unknown)=>void; onState:(alive:boolean)=>void };
 export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTerminal(props,ref) {
   const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal|null>(null);
+  const [showStartHint,setShowStartHint] = useState(false);
   const current = useRef(props); current.current=props;
   useImperativeHandle(ref,() => ({
     focus:() => terminal.current?.focus(),
@@ -15,6 +16,7 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
   }),[]);
   useEffect(() => {
     if (!host.current) return;
+    setShowStartHint(false);
     const { id }=props; let disposed=false, initialized=false, exited=true, sequence=0, placeholder=false;
     const pending:Extract<AppEvent,{type:'ghci-data'}>[]=[];
     const term=new Terminal({
@@ -38,7 +40,7 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
     const onResize=term.onResize(({ cols,rows }) => { if (initialized && !exited) window.kata.ghciResize(id,cols,rows).catch(current.current.onError); });
     const write = (event:Extract<AppEvent,{type:'ghci-data'}>) => {
       if (event.seq <= sequence) return;
-      if (placeholder) { term.reset(); placeholder=false; }
+      if (placeholder) { term.reset(); placeholder=false; setShowStartHint(false); }
       if (exited) { exited=false; current.current.onState(true); window.kata.ghciResize(id,term.cols,term.rows).catch(current.current.onError); }
       sequence=event.seq; term.write(event.data);
     };
@@ -59,7 +61,7 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
       if (disposed) return;
       sequence=snapshot?.seq || 0; exited=!snapshot?.alive;
       if (snapshot) term.write(snapshot.data);
-      else { term.writeln('⌘Enter / Ctrl+Enter または「読込」でGHCiを起動します。'); placeholder=true; }
+      else { setShowStartHint(true); placeholder=true; }
       initialized=true;
       for (const event of pending) write(event);
       pending.length=0; size();
@@ -68,5 +70,5 @@ export const GhciTerminal = forwardRef<TerminalHandle,Props>(function GhciTermin
     }).catch(error => { if (!disposed) { term.writeln(String(error)); current.current.onState(false); current.current.onError(error); } });
     return () => { disposed=true; observer.disconnect(); unsubscribe(); onData.dispose(); onResize.dispose(); term.dispose(); terminal.current=null; };
   },[props.id,props.generation]);
-  return <div className="ghci-terminal" ref={host} aria-label="GHCiターミナル"/>;
+  return <div className="ghci-terminal-container"><div className="ghci-terminal" ref={host} aria-label="GHCiターミナル"/>{showStartHint && <div className="ghci-start-hint"><span><span className="ghci-command-key">⌘</span>Enter / Ctrl+Enter または「読込」でGHCiを起動します。</span></div>}</div>;
 });
