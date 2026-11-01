@@ -67,7 +67,7 @@ export function App() {
   const assistantWidth = Math.min(preferredWidths.right,rightMax);
   const ghciMax = Math.max(220,workspaceWidth-225);
   const ghciWidth = Math.min(preferredGhciWidth,ghciMax);
-  const [vimEnabled,setVimEnabled] = useState(() => localStorage.getItem('kata-vim') !== 'off');
+  const [vimEnabled,setVimEnabled] = useState(() => localStorage.getItem('kata-vim') === 'on');
   const [fontSettings,setFontSettings] = useState(loadFontSettings);
   const [editorTheme,setEditorTheme] = useState(loadEditorTheme);
   const [fontSettingsOpen,setFontSettingsOpen] = useState(false);
