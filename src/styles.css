@@ -65,6 +65,7 @@ button svg{vertical-align:middle}
 .tab-saved{margin-left:5px;color:var(--text-subtle);display:flex}
 .dirty-dot{width:5px;height:5px;border-radius:100%;background:var(--warning);margin-left:5px}
 .editor-tools{display:flex;align-items:center;gap:8px;padding-right:14px}
+.save-button.unsaved{color:var(--error)}
 .load-button{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--accent-border);border-radius:4px;background:var(--accent-soft);color:var(--accent);font-size:10px}
 .load-button:hover{background:var(--surface-hover)}
 .load-button kbd{font-size:9px;margin-left:4px}
