@@ -10,6 +10,7 @@ import { editorTypography, type FontSettings } from './fonts';
 import { closeCompletion, fileCompletion } from './fileCompletion';
 import { inlineDiagnostics, inlineDiagnosticTheme, setInlineDiagnostics } from './inlineDiagnostics';
 import { syncVimYanks } from './vimClipboard';
+import { blockCursor } from './blockCursor';
 import type { InlineDiagnostic } from './types';
 
 const layout = EditorView.theme({
@@ -27,7 +28,7 @@ export function Editor(props:Props) {
     if (!host.current) return;
     Vim.defineEx('write', 'w', () => current.current.onSave());
     const editor = new EditorView({ parent:host.current, state:EditorState.create({ doc:current.current.code, extensions:[
-      ...(props.vimEnabled ? [vim()] : []), basicSetup, keymap.of([
+      ...(props.vimEnabled ? [vim()] : [blockCursor()]), basicSetup, keymap.of([
         { key:'Mod-s', run:() => { current.current.onSave(); return true; } },
         { key:'Mod-Shift-Enter', run:() => { current.current.onRun(); return true; } },
         { key:'Mod-Enter', run:() => { current.current.onRun(); return true; } }, indentWithTab
