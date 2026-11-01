@@ -1,5 +1,5 @@
 // Run with: npm run test:electron (requires a graphical desktop).
-const { app } = require('electron');
+const { app, clipboard, ClipboardItem } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -37,12 +37,17 @@ rl.on('line',line => {
   if (message.id !== undefined) send({ id:message.id,result });
 });`,{ mode:0o755 });
 const root = path.resolve(__dirname,'..');
+let originalClipboard;
 let finished = false;
 const timeout = setTimeout(() => finish(new Error('Electron smoke test timed out')),30000);
-function finish(error) {
+async function finish(error) {
   if (finished) return; finished = true; clearTimeout(timeout);
   if (error) console.error(error);
   else console.log('Electron smoke passed: renderer, Vim edit, manual saving, real GHCi, file switching, layouts, GHCi load shortcut, inline AI explanations and stale result handling.');
+  if (originalClipboard) {
+    try { if (originalClipboard.length) await clipboard.write(originalClipboard); else clipboard.clear(); }
+    catch (restoreError) { console.error('Clipboard restore failed:',restoreError); error ||= restoreError; }
+  }
   app.exit(error ? 1 : 0);
 }
 app.on('browser-window-created', (_,win) => {
@@ -55,12 +60,41 @@ app.on('browser-window-created', (_,win) => {
       win.webContents.sendInputEvent({ type:'keyUp',keyCode,modifiers });
     };
     const consultError = (held = false) => { key('J',['control']); key('E',held ? ['control'] : []); };
+    const yankEquals = async expected => {
+      for (let i=0;i<100 && await clipboard.readText() !== expected;i++) await pause(20);
+      assert.equal(await clipboard.readText(),expected,'Vim yank reaches the system clipboard');
+    };
     async function until(code) { for(let i=0;i<100;i++) { const value = await evaluate(`(async () => Boolean(await (${code})))()`); if(value) return value; await pause(60); } throw new Error('Timed out: '+code); }
     try {
+      // Materialize every format before a yank changes the system clipboard.
+      originalClipboard = await Promise.all((await clipboard.read()).map(async item => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type,await item.getType(type)]))))));
       await until(`document.querySelector('.xterm') && document.querySelector('.cm-content')`);
       assert.match(await evaluate('document.body.innerText'),/Multiples of 3 or 5/);
       assert.equal(await evaluate(`window.kata.list().then(list => window.kata.ghciSnapshot(list[0].id))`),null,'opening the initial file does not launch GHCi');
       await evaluate(`document.querySelector('[aria-label="AIサイドバーを閉じる"]').click()`);
+      // Real Vim keys must update the OS clipboard without changing the source.
+      await evaluate(`document.querySelector('.cm-content').focus()`);
+      const beforeYank = await evaluate(`document.querySelector('.cm-content').textContent`);
+      key('G'); key('G'); key('Y'); key('Y');
+      await yankEquals('-- Multiples of 3 or 5'+String.fromCharCode(10));
+      key('2'); key('Y'); key('Y');
+      await yankEquals('-- Multiples of 3 or 5'+String.fromCharCode(10)+'module Solution where'+String.fromCharCode(10));
+      key('G'); key('G'); key('J'); key('0'); key('Y'); key('W');
+      await yankEquals('module ');
+      key('0'); key('V'); key('E'); key('Y');
+      await yankEquals('module');
+      key('V',['shift']); key('Y');
+      await yankEquals('module Solution where'+String.fromCharCode(10));
+      key('0'); key('"'); key('A'); key('Y'); key('I'); key('W');
+      await yankEquals('module');
+      // Deletes and the black-hole register do not replace the system clipboard.
+      await clipboard.writeText('keep clipboard');
+      key('"'); key('_'); key('Y'); key('Y');
+      await pause(100); assert.equal(await clipboard.readText(),'keep clipboard');
+      key('X');
+      await pause(100); assert.equal(await clipboard.readText(),'keep clipboard');
+      key('U');
+      assert.equal(await evaluate(`document.querySelector('.cm-content').textContent`),beforeYank,'yanks and a reverted delete leave source unchanged');
       // Native key events go through Vim and CodeMirror; edits stay unsaved until requested.
       await evaluate(`document.querySelector('.cm-content').focus()`);
       win.webContents.sendInputEvent({ type:'keyDown', keyCode:'G', modifiers:['shift'] });

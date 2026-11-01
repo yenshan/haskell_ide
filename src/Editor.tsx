@@ -9,6 +9,7 @@ import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { editorTypography, type FontSettings } from './fonts';
 import { closeCompletion, fileCompletion } from './fileCompletion';
 import { inlineDiagnostics, inlineDiagnosticTheme, setInlineDiagnostics } from './inlineDiagnostics';
+import { syncVimYanks } from './vimClipboard';
 import type { InlineDiagnostic } from './types';
 
 const layout = EditorView.theme({
@@ -17,7 +18,7 @@ const layout = EditorView.theme({
   '.cm-gutters':{ minWidth:'0' },'.cm-lineNumbers .cm-gutterElement':{ padding:'0 8px' },
   '.cm-foldGutter':{ display:'none' }
 });
-type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; theme:string; diagnostics:InlineDiagnostic[]; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
+type Props = { id:string; code:string; vimEnabled:boolean; fontSettings:FontSettings; theme:string; diagnostics:InlineDiagnostic[]; onChange:(code:string)=>void; onSave:()=>void; onRun:()=>void; onError:(error:unknown)=>void; onMode:(mode:string)=>void; onCursor:(line:number, col:number)=>void };
 export function Editor(props:Props) {
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView|null>(null); const current = useRef(props); current.current = props;
   const applyingExternal = useRef(false);
@@ -47,8 +48,9 @@ export function Editor(props:Props) {
       if (event.mode !== 'insert') queueMicrotask(() => { if (view.current === editor) closeCompletion(editor); });
     };
     cm?.on('vim-mode-change', modeChange);
+    const stopClipboardSync = props.vimEnabled ? syncVimYanks(text => window.kata.copyText(text),error => current.current.onError(error)) : undefined;
     current.current.onMode(props.vimEnabled ? 'NORMAL' : 'EDIT');
-    return () => { editor.destroy(); view.current = null; };
+    return () => { stopClipboardSync?.(); editor.destroy(); view.current = null; };
   }, [props.id, props.vimEnabled]);
   useEffect(() => {
     view.current?.dispatch({ effects:appearance.current.reconfigure(editorAppearance(props.theme)) });

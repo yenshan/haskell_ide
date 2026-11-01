@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('kata', {
   ghciDiagnosticReport: id => ipcRenderer.invoke('ghci:diagnostic-report', id),
   ghciExplain: (id, token, model, effort) => ipcRenderer.invoke('ghci:explain', id, token, model, effort),
   reveal: id => ipcRenderer.invoke('problems:reveal', id),
+  copyText: text => ipcRenderer.invoke('clipboard:write', text),
   closeReady: () => ipcRenderer.invoke('app:close-ready'),
   onEvent: callback => { const listener = (_, event) => callback(event); ipcRenderer.on('kata:event', listener); ipcRenderer.send('app:renderer-ready'); return () => ipcRenderer.removeListener('kata:event', listener); }
 });

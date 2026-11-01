@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, nativeTheme, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, nativeTheme, dialog, screen, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -59,6 +59,10 @@ app.whenReady().then(async () => {
       return transition;
     },
     'problems:reveal': (_, id) => shell.showItemInFolder(store.file(id)),
+    'clipboard:write': (_, text) => {
+      if (typeof text !== 'string' || text.length > 2_000_000) throw new Error('コピーするテキストの形式またはサイズが不正です');
+      return clipboard.writeText(text);
+    },
     'ghci:write': (_, id, data) => { store.find(id); if (typeof data !== 'string' || data.length > 1_000_000) throw new Error('端末入力が大きすぎます'); services.ghci.write(id,data); },
     'ghci:resize': (_, id, cols, rows) => { store.find(id); dimensions(cols,rows); services.ghci.resize(id,cols,rows); },
     'ghci:stop': (_, id) => { store.find(id); return services.ghci.stop(id); },

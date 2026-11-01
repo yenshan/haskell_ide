@@ -21,5 +21,6 @@ export interface Bridge {
   ghciLoad(id:string, cols?:number, rows?:number):Promise<GhciReport>;
   ghciDiagnosticReport(id:string):Promise<GhciReport>; ghciExplain(id:string, token:string, model:string, effort:string):Promise<GhciReport>;
   reveal(id:string):Promise<void>; closeReady():Promise<void>; onEvent(callback:(e:AppEvent)=>void):()=>void;
+  copyText(text:string):Promise<void>;
 }
 declare global { interface Window { kata:Bridge } }
