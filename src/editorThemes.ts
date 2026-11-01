@@ -43,6 +43,7 @@ export function editorAppearance(id:string) {
     '.cm-activeLine, .cm-activeLineGutter':{ backgroundColor:p.active },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection':{ backgroundColor:`${p.selection} !important` },
     '.cm-cursor, .cm-dropCursor':{ borderLeftColor:p.accent },
+    '.cm-cursor':{ marginLeft:'0',borderLeftWidth:'2px' },
     '&.cm-focused .cm-fat-cursor':{ backgroundColor:`${p.accent} !important`,color:`${p.background} !important` },
     '&:not(.cm-focused) .cm-fat-cursor':{ backgroundColor:'transparent !important',color:'transparent !important',outline:`1px solid ${p.accent} !important`,outlineOffset:'-1px' },
     '.cm-panels, .cm-tooltip':{ backgroundColor:p.gutter,color:p.text,borderColor:p.border },
