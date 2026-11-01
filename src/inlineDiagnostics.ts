@@ -80,7 +80,7 @@ export const inlineDiagnosticTheme = EditorView.baseTheme({
   },
   '.cm-inline-diagnostic':{
     position:'absolute',top:'calc(1lh + 12px)',left:'0',zIndex:'2',display:'block',width:'min(480px, 45vw)',padding:'3px 8px',
-    borderRadius:'4px',backgroundColor:'#fff0eb',color:'#963c2b',fontSize:'11px',
+    borderRadius:'4px',backgroundColor:'#fff0eb',color:'#963c2b',fontSize:'inherit',
     fontFamily:'-apple-system, BlinkMacSystemFont, sans-serif',lineHeight:'1.7',
     verticalAlign:'top',whiteSpace:'pre-wrap',overflowWrap:'anywhere',overflow:'visible',
     cursor:'help',userSelect:'text'
